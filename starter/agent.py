@@ -5,6 +5,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from starter.memory import CurrentState, MemoryService, ParseUpdate, StateNotFoundError
+
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 STOPWORDS = {
@@ -33,12 +35,12 @@ def _terms(text: str) -> list[str]:
 
 
 class Agent:
-    """Editable weak baseline: stateless BM25 retrieval with no LLM dependency."""
+    """BM25 starter with deterministic, session-scoped state management."""
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:")
-        self._sessions: set[str] = set()
+        self.memory = MemoryService()
         self._build_index()
 
     def _build_index(self) -> None:
@@ -71,8 +73,16 @@ class Agent:
         self.connection.commit()
 
     def reset(self, session_id: str, user_profile: dict) -> None:
-        # The profile is anonymized and may be used for personalization.
-        self._sessions.add(session_id)
+        # CurrentState stores the active shopping task, not catalog records or
+        # raw user history. Replacing it is the session-reset invariant.
+        self.memory.reset_state(session_id)
+
+    def apply_update(self, parsed: ParseUpdate | dict) -> CurrentState:
+        """Apply a structured Dialogue-module update to session memory."""
+        return self.memory.apply_update(parsed)
+
+    def get_state(self, session_id: str) -> CurrentState:
+        return self.memory.get_state(session_id)
 
     def respond(
         self,
@@ -81,9 +91,14 @@ class Agent:
         turn: int,
         top_k: int,
     ) -> dict:
-        if session_id not in self._sessions:
-            raise RuntimeError("reset must be called before respond")
-        unique_terms = list(dict.fromkeys(_terms(user_message)))[:40]
+        try:
+            retrieval_state = self.memory.get_retrieval_state(session_id)
+        except StateNotFoundError as error:
+            raise RuntimeError("reset must be called before respond") from error
+        unique_terms = list(dict.fromkeys([
+            *_terms(user_message),
+            *_terms(retrieval_state.retrieval_text()),
+        ]))[:40]
         expression = " OR ".join(f'"{term}"' for term in unique_terms)
         if not expression:
             recommendations: list[dict] = []
