@@ -1,0 +1,4 @@
+# Optional only. Default lexical/structured retrieval uses Python's standard library.
+# Use Python 3.10+ for this optional environment; default retrieval supports 3.9+.
+numpy>=1.26,<3
+sentence-transformers>=3,<6

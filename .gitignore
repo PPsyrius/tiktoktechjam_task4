@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+.idea/
+.venv/
 .env
 results.json
 data/catalog.jsonl
@@ -16,3 +18,7 @@ docs/participant_release_checklist.md
 tests/test_5core_builder.py
 tests/test_organizer_pipeline.py
 *.log
+# Reproducible local task 4 assets and experiment outputs (not source data).
+.cache/retrieval/
+artifacts/retrieval/
+results/
