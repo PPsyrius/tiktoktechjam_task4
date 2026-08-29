@@ -48,7 +48,7 @@ DECLINE_SLOT = {
 }
 
 
-def _clean(value: str, limit: int = 80) -> str:
+def _clean(value: str, limit: int = 180) -> str:
     return re.sub(r"\s+", " ", value).strip(" -;,.\t\n")[:limit].rstrip()
 
 
@@ -128,8 +128,12 @@ def parse_user_message(
                 constraint_chunks.append(remainder)
 
     for chunk in constraint_chunks:
+        cleaned = _clean(chunk, limit=180)
+        if not cleaned:
+            continue
         classified = _classify(chunk)
         if classified is None:
+            updates.append(StateUpdate("feature", UpdateOperation.ADD, cleaned))
             continue
         slot, value = classified
         op = (
@@ -138,6 +142,9 @@ def parse_user_message(
             else UpdateOperation.SET
         )
         updates.append(StateUpdate(slot, op, value))
+        # Keep the raw snippet when it is more identifying than the slot token.
+        if slot != "feature" and cleaned.lower() != str(value).strip().lower():
+            updates.append(StateUpdate("feature", UpdateOperation.ADD, cleaned))
 
     decline = DECLINE_RE.search(message)
     if decline:
