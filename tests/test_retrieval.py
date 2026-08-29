@@ -107,7 +107,7 @@ class AgentRetrievalPipelineTest(unittest.TestCase):
         self.assertEqual(state.constraints["color"], "black")
         self.assertEqual(response["recommendations"][0]["parent_asin"], "B_BLACK")
         self.assertIn(response["ask_attribute"], {
-            "color", "material", "brand", "size", "style", "feature", "use_case", "budget", None,
+            "other", "color", "material", "brand", "size", "style", "feature", "use_case", "budget", None,
         })
         # color was specified, so the first clarification should not be color
         self.assertNotEqual(response["ask_attribute"], "color")
