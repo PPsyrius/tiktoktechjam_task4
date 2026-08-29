@@ -111,6 +111,104 @@ class AgentRetrievalPipelineTest(unittest.TestCase):
         })
         # color was specified, so the first clarification should not be color
         self.assertNotEqual(response["ask_attribute"], "color")
+
+
+class Section5RankingTests(unittest.TestCase):
+    def test_soft_preferences_do_not_become_hard_failures(self) -> None:
+        result = rank_candidates(
+            {
+                "intent": "buying",
+                "hard_constraints": {"color": ["black"]},
+                "soft_preferences": {"material": ["cotton"]},
+                "excluded": {},
+            },
+            [
+                {
+                    "parent_asin": "A_BLACK_LEATHER",
+                    "title": "Black running shoe",
+                    "attributes": {"color": ("black",), "material": ("leather",)},
+                    "price": 70,
+                    "source_scores": {"bm25": 3.0},
+                },
+                {
+                    "parent_asin": "B_BLACK_COTTON",
+                    "title": "Black running shoe",
+                    "attributes": {"color": ("black",), "material": ("cotton",)},
+                    "price": 72,
+                    "source_scores": {"bm25": 2.0},
+                },
+            ],
+        )
+        items = {item.parent_asin: item for item in result.items}
+        self.assertEqual(items["A_BLACK_LEATHER"].hard_failures, [])
+        self.assertEqual(result.items[0].parent_asin, "B_BLACK_COTTON")
+
+    def test_budget_constraint_can_beat_higher_text_score(self) -> None:
+        result = rank_candidates(
+            {
+                "intent": "buying",
+                "hard_constraints": {"price_max": 80},
+                "soft_preferences": {},
+                "excluded": {},
+            },
+            [
+                {
+                    "parent_asin": "A_OVER_BUDGET",
+                    "title": "Running shoe",
+                    "price": 120,
+                    "source_scores": {"bm25": 6.0},
+                },
+                {
+                    "parent_asin": "B_IN_BUDGET",
+                    "title": "Running shoe",
+                    "price": 60,
+                    "source_scores": {"bm25": 1.0},
+                },
+            ],
+        )
+        self.assertEqual(result.items[0].parent_asin, "B_IN_BUDGET")
+
+    def test_excluded_values_are_penalized(self) -> None:
+        result = rank_candidates(
+            {
+                "intent": "buying",
+                "hard_constraints": {},
+                "soft_preferences": {},
+                "excluded": {"color": ["black"]},
+            },
+            [
+                {
+                    "parent_asin": "A_BLACK",
+                    "title": "Black running shoe",
+                    "attributes": {"color": ("black",)},
+                    "source_scores": {"bm25": 4.0},
+                },
+                {
+                    "parent_asin": "B_BLUE",
+                    "title": "Blue running shoe",
+                    "attributes": {"color": ("blue",)},
+                    "source_scores": {"bm25": 1.0},
+                },
+            ],
+        )
+        self.assertEqual(result.items[0].parent_asin, "B_BLUE")
+
+    def test_browsing_mode_is_less_harsh_on_hard_misses(self) -> None:
+        candidate = {
+            "parent_asin": "A_RED",
+            "title": "Red running shoe",
+            "attributes": {"color": ("red",)},
+            "source_scores": {"bm25": 5.0},
+        }
+        buying = rank_candidates(
+            {"intent": "buying", "hard_constraints": {"color": ["black"]}},
+            [candidate],
+        )
+        browsing = rank_candidates(
+            {"intent": "browsing", "hard_constraints": {"color": ["black"]}},
+            [candidate],
+        )
+        self.assertGreater(browsing.items[0].final_score, buying.items[0].final_score)
 import gzip
 import importlib.util
 import json

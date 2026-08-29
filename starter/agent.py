@@ -166,6 +166,8 @@ class Agent:
                 "parent_asin": candidate.parent_asin,
                 "source_scores": source_scores,
                 "source_ranks": source_ranks,
+                "attributes": dict(product.attributes),
+                "price": product.price,
             }
             payload.update(dict(zip(PRODUCT_TEXT_FIELDS, product.fields)))
             candidates.append(payload)
@@ -217,11 +219,12 @@ class Agent:
             retrieval_context,
             limit=max(RETRIEVAL_POOL_SIZE, top_k),
         )
-        ranking_context = retrieval_state.to_dict()
-        ranking_context["hard_constraints"] = [
-            *retrieval_state.hard_constraints.values(),
-            *retrieval_state.soft_preferences.values(),
-        ]
+        ranking_context = {
+            "intent": retrieval_state.intent.value,
+            "hard_constraints": retrieval_state.hard_constraints,
+            "soft_preferences": retrieval_state.soft_preferences,
+            "excluded": retrieval_state.excluded,
+        }
         ranking = rank_candidates(
             ranking_context,
             self._candidate_payloads(pool),
