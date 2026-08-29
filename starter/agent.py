@@ -1,76 +1,41 @@
 from __future__ import annotations
 
-import json
-import re
-import sqlite3
 from pathlib import Path
 
-from starter.memory import CurrentState, MemoryService, ParseUpdate, StateNotFoundError
+from starter.memory import (
+    AttributeStatus,
+    CurrentState,
+    MemoryService,
+    ParseUpdate,
+    StateNotFoundError,
+    StateUpdate,
+    UpdateOperation,
+)
+from starter.understanding import parse_requirement
+from starter.reranker import rank_candidates
+from starter.retrieval import Retriever, search_context_from_state
 
 
-TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
-STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
-    "i", "in", "is", "it", "me", "my", "of", "on", "or", "please", "some",
-    "that", "the", "this", "to", "want", "with", "would", "you", "looking",
-}
-
-
-def _text(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, dict):
-        return " ".join(f"{key} {item}" for key, item in value.items())
-    if isinstance(value, list):
-        return " ".join(str(item) for item in value)
-    return str(value)
-
-
-def _terms(text: str) -> list[str]:
-    return [
-        token.lower()
-        for token in TOKEN_RE.findall(text)
-        if len(token) > 1 and token.lower() not in STOPWORDS
-    ]
+CLARIFY_ORDER = (
+    "color",
+    "material",
+    "brand",
+    "size",
+    "style",
+    "feature",
+    "use_case",
+    "budget",
+)
+RETRIEVAL_POOL_SIZE = 50
 
 
 class Agent:
-    """BM25 starter with deterministic, session-scoped state management."""
+    """Session memory, BM25 retrieval, and constraint-aware reranking."""
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
-        self.connection = sqlite3.connect(":memory:")
+        self.retriever = Retriever(self.catalog_path)
         self.memory = MemoryService()
-        self._build_index()
-
-    def _build_index(self) -> None:
-        cursor = self.connection.cursor()
-        cursor.execute(
-            "CREATE VIRTUAL TABLE products USING fts5("
-            "parent_asin UNINDEXED, title, categories, features, details, store, description, "
-            "tokenize='unicode61 remove_diacritics 2')"
-        )
-        batch: list[tuple[str, str, str, str, str, str, str]] = []
-        with self.catalog_path.open(encoding="utf-8") as handle:
-            for line in handle:
-                product = json.loads(line)
-                batch.append(
-                    (
-                        str(product["parent_asin"]),
-                        _text(product.get("title")),
-                        _text(product.get("categories")),
-                        _text(product.get("features")),
-                        _text(product.get("details")),
-                        _text(product.get("store")),
-                        _text(product.get("description")),
-                    )
-                )
-                if len(batch) >= 1000:
-                    cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-                    batch.clear()
-        if batch:
-            cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-        self.connection.commit()
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         # CurrentState stores the active shopping task, not catalog records or
@@ -92,26 +57,72 @@ class Agent:
         top_k: int,
     ) -> dict:
         try:
-            retrieval_state = self.memory.get_retrieval_state(session_id)
+            self.memory.get_state(session_id)
         except StateNotFoundError as error:
             raise RuntimeError("reset must be called before respond") from error
-        unique_terms = list(dict.fromkeys([
-            *_terms(user_message),
-            *_terms(retrieval_state.retrieval_text()),
-        ]))[:40]
-        expression = " OR ".join(f'"{term}"' for term in unique_terms)
-        if not expression:
-            recommendations: list[dict] = []
+
+        retrieval_state = self.memory.get_retrieval_state(session_id)
+        parse_result = parse_requirement(
+            session_id,
+            user_message,
+            turn,
+            search_context=retrieval_state,
+        )
+        parsed = parse_result.parsed
+        if parsed is not None:
+            if parsed.reset_task:
+                current = self.memory.get_state(session_id)
+                if current.category and not any(update.slot == "category" for update in parsed.updates):
+                    parsed = ParseUpdate(
+                        session_id=parsed.session_id,
+                        intent=parsed.intent,
+                        updates=(
+                            StateUpdate("category", UpdateOperation.SET, current.category),
+                            *parsed.updates,
+                        ),
+                        reset_task=True,
+                        source_turn=parsed.source_turn,
+                    )
+            try:
+                self.memory.apply_update(parsed)
+            except (TypeError, ValueError):
+                pass
+            else:
+                retrieval_state = self.memory.get_retrieval_state(session_id)
+
+        search_context = search_context_from_state(retrieval_state)
+        candidate_pool = self.retriever.retrieve(
+            user_message,
+            search_context=retrieval_state,
+            pool_size=max(RETRIEVAL_POOL_SIZE, top_k),
+        )
+        ranking = rank_candidates(search_context, candidate_pool, top_k=top_k)
+        recommendations = [
+            {"parent_asin": item.parent_asin, "score": item.final_score}
+            for item in ranking.items
+        ]
+
+        state = self.memory.get_state(session_id)
+        clarify_candidates = [
+            attribute
+            for attribute in CLARIFY_ORDER
+            if state.status_for(attribute) is AttributeStatus.UNKNOWN
+        ]
+        ask_attribute = self.memory.get_or_record_asked_attribute(
+            session_id,
+            turn,
+            clarify_candidates,
+        )
+        if ask_attribute:
+            message = f"Do you have a {ask_attribute} preference?"
         else:
-            rows = self.connection.execute(
-                "SELECT parent_asin FROM products WHERE products MATCH ? "
-                "ORDER BY bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) LIMIT ?",
-                (expression, top_k),
-            ).fetchall()
-            recommendations = [{"parent_asin": str(row[0])} for row in rows]
+            message = "Here are the closest matches I found."
         return {
-            "message": "Here are the closest matches I found.",
-            "ask_attribute": None,
+            "message": message,
+            "ask_attribute": ask_attribute,
             "recommendations": recommendations,
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+            "usage": {
+                "prompt_tokens": parse_result.prompt_tokens,
+                "completion_tokens": parse_result.completion_tokens,
+            },
         }

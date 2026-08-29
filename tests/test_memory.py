@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -644,6 +645,7 @@ class MemoryServiceTest(unittest.TestCase):
 
 class AgentMemoryIntegrationTest(unittest.TestCase):
     def setUp(self) -> None:
+        os.environ["LLM_PARSER"] = "0"
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.catalog_path = Path(self.temporary_directory.name) / "catalog.jsonl"
         products = [
