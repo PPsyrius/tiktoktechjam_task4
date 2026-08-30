@@ -25,7 +25,7 @@ Tests: `tests/test_understanding.py`.
 | File | Responsibility |
 | --- | --- |
 | `query_parser.py` | `parse_user_message(session_id, user_message, turn)` using patterns for Buying, Browsing, decline, and intent override |
-| `llm_parser.py` | `parse_requirement(...)` — LLM when configured, otherwise the rule-based parser |
+| `llm_parser.py` | `parse_requirement(...)` — LLM when configured, otherwise the rule-based parser; merges rule `feature` snippets into a valid LLM result |
 | `__init__.py` | Public API: `parse_requirement`, `parse_user_message`, `ParseResult` |
 
 Agent entry point:
@@ -61,7 +61,9 @@ Assignment 2 describes **this turn**. Assignment 3 merges turns into the session
 
 When `reset_task` is true, Memory clears the shopping task. The Agent may re-attach `category` before `apply_update` so the product type is not dropped on override.
 
-Example `ParseUpdate`:
+Constraint strings are cleaned to **180 characters** (the same cap the local evaluator uses for intent-card snippets). Values that classify as a short token (`cotton`, `black`) still emit that slot. If the raw phrase is longer, the parser also `add`s the full snippet on `feature` so later retrieval can exact-match catalog text.
+
+Example when the requirement is only the token `black`:
 
 ```json
 {
@@ -75,7 +77,22 @@ Example `ParseUpdate`:
 }
 ```
 
-Corresponding Memory retrieval snapshot:
+Example when the requirement is a longer catalog line:
+
+```json
+{
+  "session_id": "s1",
+  "intent": "buying",
+  "source_turn": 1,
+  "updates": [
+    {"slot": "category", "op": "set", "value": "running shoes"},
+    {"slot": "material", "op": "set", "value": "cotton"},
+    {"slot": "feature", "op": "add", "value": "100% Cotton Lightweight Breathable"}
+  ]
+}
+```
+
+Corresponding Memory retrieval snapshot for the first example:
 
 ```json
 {
@@ -91,7 +108,7 @@ Corresponding Memory retrieval snapshot:
 
 ## LLM path
 
-Used only when `OPENAI_API_KEY` or `LLM_API_KEY` is present in the process environment. Missing key, timeout, HTTP failure, or invalid JSON falls back to `query_parser.py`. Official scoring may disable network; the rule-based path must remain sufficient.
+Used only when `OPENAI_API_KEY` or `LLM_API_KEY` is present in the process environment. Missing key, timeout, HTTP failure, or invalid JSON falls back to `query_parser.py`. When the LLM returns valid JSON, rule-based `feature` snippets from the same message are still merged into that `ParseUpdate`. Official scoring may disable network; the rule-based path must remain sufficient. LLM string values are truncated to 180 characters.
 
 | Variable | Role |
 | --- | --- |
@@ -103,7 +120,7 @@ Used only when `OPENAI_API_KEY` or `LLM_API_KEY` is present in the process envir
 
 API keys must not be committed. Token counts are reported on `ParseResult` and forwarded in the Agent `usage` field.
 
-The LLM extracts slots from the user message only. It is not used to generate product IDs from retrieved catalog text.
+The LLM extracts slots from the user message only. It is not used to generate product IDs from retrieved catalog text. Short color/material tokens from the model are kept; identifying catalog phrases still come from the rule merge when the LLM omits them.
 
 ---
 
@@ -121,12 +138,10 @@ Use Python 3.10+. `tests.test_memory` covers Assignment 3. `tests.test_understan
 
 ## Pending
 
-Current implementation is a first-pass Assignment 2 that matches the Memory contract.
-
 - Team spec files (`intent_classifier.py`, `constraint_parser.py`, `query_rewriter.py`) are not split out; logic lives in the two parsers above.
 - Intent has no confidence score.
-- No separate retrieval query-rewrite string; BM25 still uses the user message plus Memory `retrieval_text()`.
-- Rule-based extraction is limited on long or messy constraint phrases; the LLM path is untested against a live API in CI (mocks only).
+- Semicolon-joined customer replies can split a single catalog feature into fragments; ranking also matches the raw user message, which is outside this package.
+- The LLM path is untested against a live API in CI (mocks only).
 - Hard / soft / negative constraints use Memory ops in a basic way, not a full constraint taxonomy.
 
 Catalog ProductStore (Assignment 1), hybrid/semantic retrieval (Assignment 4), and fusion/reranking (Assignment 5) are out of scope for this package.

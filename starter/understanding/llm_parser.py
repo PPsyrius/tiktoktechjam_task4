@@ -173,7 +173,7 @@ def _sanitize_updates(raw_updates: object) -> list[dict[str, Any]]:
             text = str(value).strip()
             if not text:
                 continue
-            update["value"] = text[:120]
+            update["value"] = text[:180]
         cleaned.append(update)
     return cleaned
 
@@ -193,6 +193,26 @@ def parsed_update_from_llm(
         "source_turn": turn,
         "updates": _sanitize_updates(payload.get("updates")),
     })
+
+
+def _merge_rule_snippets(parsed: ParseUpdate, fallback: ParseUpdate | None) -> ParseUpdate:
+    if fallback is None or not fallback.updates:
+        return parsed
+    existing = {(update.slot, update.op, update.value) for update in parsed.updates}
+    extra = [
+        update
+        for update in fallback.updates
+        if update.slot == "feature" and (update.slot, update.op, update.value) not in existing
+    ]
+    if not extra:
+        return parsed
+    return ParseUpdate(
+        session_id=parsed.session_id,
+        intent=parsed.intent,
+        updates=(*parsed.updates, *extra),
+        reset_task=parsed.reset_task,
+        source_turn=parsed.source_turn,
+    )
 
 
 def complete_chat(user_prompt: str) -> dict[str, Any] | None:
@@ -261,6 +281,8 @@ def parse_requirement(
                 payload = extract_json_object(response["content"])
                 parsed = parsed_update_from_llm(session_id, turn, payload)
                 if parsed.intent is not None or parsed.updates or parsed.reset_task:
+                    fallback = parse_user_message(session_id, user_message, turn)
+                    parsed = _merge_rule_snippets(parsed, fallback)
                     return ParseResult(
                         parsed=parsed,
                         source="llm",

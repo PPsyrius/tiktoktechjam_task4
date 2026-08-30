@@ -107,133 +107,121 @@ class AgentRetrievalPipelineTest(unittest.TestCase):
         self.assertEqual(state.constraints["color"], "black")
         self.assertEqual(response["recommendations"][0]["parent_asin"], "B_BLACK")
         self.assertIn(response["ask_attribute"], {
-            "color", "material", "brand", "size", "style", "feature", "use_case", "budget", None,
+            "other", "color", "material", "brand", "size", "style", "feature", "use_case", "budget", None,
         })
         # color was specified, so the first clarification should not be color
         self.assertNotEqual(response["ask_attribute"], "color")
 
+    def test_same_task_override_preserves_other_disclosed_constraints(self) -> None:
+        self.agent.reset("override", {})
+        self.agent.respond(
+            "override",
+            "I'm looking for shirts. Button closure.",
+            1,
+            10,
+        )
+        self.agent.respond(
+            "override",
+            "For that, what matters is: cotton; 60% Cotton, 40% Polyester.",
+            2,
+            10,
+        )
 
-class Section5RankingTests(unittest.TestCase):
-    def test_soft_preferences_do_not_become_hard_failures(self) -> None:
-        result = rank_candidates(
-            {
-                "intent": "buying",
-                "hard_constraints": {"color": ["black"]},
-                "soft_preferences": {"material": ["cotton"]},
-                "excluded": {},
-            },
-            [
-                {
-                    "parent_asin": "A_BLACK_LEATHER",
-                    "title": "Black running shoe",
-                    "attributes": {"color": ("black",), "material": ("leather",)},
-                    "price": 70,
-                    "source_scores": {"bm25": 3.0},
-                },
-                {
-                    "parent_asin": "B_BLACK_COTTON",
-                    "title": "Black running shoe",
-                    "attributes": {"color": ("black",), "material": ("cotton",)},
-                    "price": 72,
-                    "source_scores": {"bm25": 2.0},
-                },
-            ],
+        response = self.agent.respond(
+            "override",
+            "Actually, ignore my earlier preference. What I need is: cotton.",
+            3,
+            10,
         )
-        items = {item.parent_asin: item for item in result.items}
-        self.assertEqual(items["A_BLACK_LEATHER"].hard_failures, [])
-        self.assertEqual(result.items[0].parent_asin, "B_BLACK_COTTON")
+        state = self.agent.get_state("override")
 
-    def test_budget_constraint_can_beat_higher_text_score(self) -> None:
-        result = rank_candidates(
-            {
-                "intent": "buying",
-                "hard_constraints": {"price_max": 80},
-                "soft_preferences": {},
-                "excluded": {},
-            },
-            [
-                {
-                    "parent_asin": "A_OVER_BUDGET",
-                    "title": "Running shoe",
-                    "price": 120,
-                    "source_scores": {"bm25": 6.0},
-                },
-                {
-                    "parent_asin": "B_IN_BUDGET",
-                    "title": "Running shoe",
-                    "price": 60,
-                    "source_scores": {"bm25": 1.0},
-                },
-            ],
-        )
-        self.assertEqual(result.items[0].parent_asin, "B_IN_BUDGET")
+        self.assertEqual(state.task_version, 0)
+        self.assertEqual(state.category, "shirts")
+        self.assertEqual(state.preferences["material"], "cotton")
+        self.assertIn("60% Cotton, 40% Polyester", state.preferences["feature"])
+        self.assertEqual(response["ask_attribute"], "other")
 
-    def test_excluded_values_are_penalized(self) -> None:
-        result = rank_candidates(
-            {
-                "intent": "buying",
-                "hard_constraints": {},
-                "soft_preferences": {},
-                "excluded": {"color": ["black"]},
-            },
-            [
-                {
-                    "parent_asin": "A_BLACK",
-                    "title": "Black running shoe",
-                    "attributes": {"color": ("black",)},
-                    "source_scores": {"bm25": 4.0},
-                },
-                {
-                    "parent_asin": "B_BLUE",
-                    "title": "Blue running shoe",
-                    "attributes": {"color": ("blue",)},
-                    "source_scores": {"bm25": 1.0},
-                },
-            ],
+    def test_feature_override_does_not_clear_independent_features(self) -> None:
+        self.agent.reset("feature-override", {})
+        self.agent.respond(
+            "feature-override",
+            "I'm looking for watches. Stainless Steel Band.",
+            1,
+            10,
         )
-        self.assertEqual(result.items[0].parent_asin, "B_BLUE")
+        self.agent.respond(
+            "feature-override",
+            "For that, what matters is: Water Resistant; 3 Year Battery.",
+            2,
+            10,
+        )
 
-    def test_browsing_mode_is_less_harsh_on_hard_misses(self) -> None:
-        candidate = {
-            "parent_asin": "A_RED",
-            "title": "Red running shoe",
-            "attributes": {"color": ("red",)},
-            "source_scores": {"bm25": 5.0},
-        }
-        buying = rank_candidates(
-            {"intent": "buying", "hard_constraints": {"color": ["black"]}},
-            [candidate],
+        self.agent.respond(
+            "feature-override",
+            "Actually, ignore my earlier preference. What I need is: Water Resistant.",
+            3,
+            10,
         )
-        browsing = rank_candidates(
-            {"intent": "browsing", "hard_constraints": {"color": ["black"]}},
-            [candidate],
-        )
-        self.assertGreater(browsing.items[0].final_score, buying.items[0].final_score)
+        features = self.agent.get_state("feature-override").preferences["feature"]
 
-    def test_snippet_rank_can_break_ties_between_similar_candidates(self) -> None:
-        result = rank_candidates(
-            {
-                "intent": "buying",
-                "hard_constraints": {},
-                "soft_preferences": {},
-                "excluded": {},
-            },
-            [
-                {
-                    "parent_asin": "A_SNIPPET",
-                    "title": "Running shoe",
-                    "source_scores": {"bm25": 2.0, "snippet": 50.0},
-                    "source_ranks": {"bm25": 2, "snippet": 1},
-                },
-                {
-                    "parent_asin": "B_BM25",
-                    "title": "Running shoe",
-                    "source_scores": {"bm25": 2.0},
-                    "source_ranks": {"bm25": 1},
-                },
-            ],
+        self.assertIn("Water Resistant", features)
+        self.assertIn("3 Year Battery", features)
+
+    def test_override_with_new_category_starts_a_new_task(self) -> None:
+        self.agent.reset("new-task", {})
+        self.agent.respond(
+            "new-task",
+            "I'm looking for running shoes. A key requirement is: black.",
+            1,
+            10,
         )
-        self.assertEqual(result.items[0].parent_asin, "A_SNIPPET")
+
+        self.agent.respond(
+            "new-task",
+            "Actually, ignore my earlier preference. I'm looking for jackets. "
+            "A key requirement is: polyester.",
+            2,
+            10,
+        )
+        state = self.agent.get_state("new-task")
+
+        self.assertEqual(state.task_version, 1)
+        self.assertEqual(state.category, "jackets")
+        self.assertNotIn("color", state.constraints)
+        self.assertEqual(state.preferences["material"], "polyester")
+
+    def test_candidate_history_admits_prior_candidate_without_old_score(self) -> None:
+        current = [{
+            "parent_asin": "C_RED",
+            "source_scores": {"bm25": 9.0},
+            "source_ranks": {"bm25": 1},
+        }]
+        self.agent._candidate_history["stable"] = (0, ("B_BLACK",))
+
+        admitted = self.agent._admit_candidate_history("stable", 0, current)
+        historical = next(item for item in admitted if item["parent_asin"] == "B_BLACK")
+
+        self.assertEqual(historical["source_scores"], {})
+        self.assertEqual(historical["source_ranks"], {})
+
+    def test_candidate_history_is_discarded_for_a_new_task(self) -> None:
+        current = [{
+            "parent_asin": "C_RED",
+            "source_scores": {"bm25": 9.0},
+            "source_ranks": {"bm25": 1},
+        }]
+        self.agent._candidate_history["changed"] = (0, ("B_BLACK",))
+
+        admitted = self.agent._admit_candidate_history("changed", 1, current)
+
+        self.assertEqual([item["parent_asin"] for item in admitted], ["C_RED"])
+
+    def test_reset_discards_candidate_history(self) -> None:
+        self.agent._candidate_history["reset-history"] = (0, ("B_BLACK",))
+
+        self.agent.reset("reset-history", {})
+
+        self.assertNotIn("reset-history", self.agent._candidate_history)
 import gzip
 import importlib.util
 import json

@@ -23,36 +23,27 @@ class RankingResult:
 
 
 def _base_candidate_score(candidate: dict[str, Any]) -> float:
-    source_scores = candidate.get("source_scores") or {}
-    source_ranks = candidate.get("source_ranks") or {}
+    ranks = candidate.get("source_ranks") or {}
+    scores = candidate.get("source_scores") or {}
     total = 0.0
-
-    snippet_rank = source_ranks.get("snippet")
+    snippet_rank = ranks.get("snippet")
     if snippet_rank:
         total += 1.2 / float(snippet_rank)
-    elif source_scores.get("snippet"):
-        total += min(float(source_scores["snippet"]), 80.0) / 40.0
-
-    bm25_rank = source_ranks.get("bm25")
+    elif scores.get("snippet"):
+        total += min(float(scores["snippet"]), 80.0) / 40.0
+    bm25_rank = ranks.get("bm25")
     if bm25_rank:
         total += 2.0 / float(bm25_rank)
-    elif source_scores.get("bm25"):
-        total += min(float(source_scores["bm25"]), 20.0) / 20.0
-
-    structured_rank = source_ranks.get("structured")
+    elif scores.get("bm25"):
+        total += min(float(scores["bm25"]), 20.0) / 20.0
+    structured_rank = ranks.get("structured")
     if structured_rank:
         total += 0.4 / float(structured_rank)
-    elif source_scores.get("structured"):
-        total += min(float(source_scores["structured"]), 5.0) / 10.0
-
-    semantic_rank = source_ranks.get("semantic")
+    elif scores.get("structured"):
+        total += min(float(scores["structured"]), 5.0) / 10.0
+    semantic_rank = ranks.get("semantic")
     if semantic_rank:
         total += 0.6 / float(semantic_rank)
-    elif source_scores.get("semantic"):
-        total += min(float(source_scores["semantic"]), 5.0) / 10.0
-
-    if not total:
-        total = sum(float(score) for score in source_scores.values())
     return total
 
 

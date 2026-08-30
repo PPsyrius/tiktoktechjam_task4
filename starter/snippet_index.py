@@ -16,7 +16,7 @@ MIN_NEEDLE_CHARS = 11
 
 
 def fold_text(value: object) -> str:
-    """Normalize free text so exact snippets match catalog fields more reliably."""
+    """Lowercase, drop colons, and collapse whitespace so 'Color: Black' matches 'color black'."""
     if value is None:
         return ""
     if isinstance(value, dict):
@@ -67,9 +67,8 @@ def fold_variants(text: str) -> list[str]:
     if "gray" in folded:
         variants.append(folded.replace("gray", "grey"))
     if folded.startswith("color "):
-        remainder = folded[6:]
-        variants.append(remainder)
-        variants.extend(fold_variants(remainder))
+        variants.append(folded[6:])
+        variants.extend(fold_variants(folded[6:]))
     seen: set[str] = set()
     unique: list[str] = []
     for item in variants:
@@ -127,7 +126,6 @@ class SnippetIndex:
     def _index_catalog(self, path: Path) -> None:
         if path.suffix == ".gz":
             import gzip
-
             handle = gzip.open(path, "rt", encoding="utf-8")
         else:
             handle = path.open(encoding="utf-8")
@@ -199,11 +197,9 @@ class SnippetIndex:
 
         results: list[dict[str, Any]] = []
         for rank, (score, asin) in enumerate(scored[:limit], start=1):
-            results.append(
-                {
-                    "parent_asin": asin,
-                    "source_scores": {"snippet": score},
-                    "source_ranks": {"snippet": rank},
-                }
-            )
+            results.append({
+                "parent_asin": asin,
+                "source_scores": {"snippet": score},
+                "source_ranks": {"snippet": rank},
+            })
         return results
