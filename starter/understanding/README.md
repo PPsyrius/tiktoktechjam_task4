@@ -16,6 +16,7 @@ user message → parse_requirement() → ParseUpdate → Memory.apply_update() �
 starter/understanding/
   __init__.py
   query_parser.py    rule-based parser (offline fallback)
+  query_rewriter.py  retrieval query construction
   llm_parser.py      optional LLM parser
   README.md
 ```
@@ -24,9 +25,10 @@ Tests: `tests/test_understanding.py`.
 
 | File | Responsibility |
 | --- | --- |
-| `query_parser.py` | `parse_user_message(session_id, user_message, turn)` using patterns for Buying, Browsing, decline, and intent override |
-| `llm_parser.py` | `parse_requirement(...)` — LLM when configured, otherwise the rule-based parser; merges rule `feature` snippets into a valid LLM result |
-| `__init__.py` | Public API: `parse_requirement`, `parse_user_message`, `ParseResult` |
+| `query_parser.py` | `parse_user_message(...)`, `classify_intent(...)`, `constraint_kind(...)` — intent, hard/soft/negative slots, override, decline, exclude |
+| `llm_parser.py` | `parse_requirement(...)` — rules always run; optional DeepSeek may add slots; rule `feature` snippets are never dropped |
+| `query_rewriter.py` | `rewrite_queries(...)` — retrieval-oriented strings from this turn and SearchContext |
+| `__init__.py` | Public API: `parse_requirement`, `parse_user_message`, `classify_intent`, `constraint_kind`, `rewrite_queries`, `ParseResult` |
 
 Agent entry point:
 
@@ -36,7 +38,9 @@ from starter.understanding import parse_requirement
 result = parse_requirement(session_id, user_message, turn, search_context=retrieval_state)
 ```
 
-`ParseResult` fields: `parsed` (`ParseUpdate` or `None`), `source` (`llm` or `rules`), `prompt_tokens`, `completion_tokens`, optional `error`.
+`ParseResult` fields: `parsed` (`ParseUpdate` or `None`), `source` (`rules` or `deepseek`), `prompt_tokens`, `completion_tokens`, optional `error`, `intent_confidence` (0–1), `constraint_kinds` (`hard` / `soft` / `negative` / `decline` / `clear` / `task` per update), and `query_rewrites` (retrieval strings, max 8).
+
+Rules always run first. A model is optional and may only add understanding. Identifying catalog phrases from the rule matcher are merged back in, so a model cannot replace `100% Cotton Lightweight` with `cotton`.
 
 ---
 
@@ -106,21 +110,22 @@ Corresponding Memory retrieval snapshot for the first example:
 
 ---
 
-## LLM path
+## Optional model path
 
-Used only when `OPENAI_API_KEY` or `LLM_API_KEY` is present in the process environment. Missing key, timeout, HTTP failure, or invalid JSON falls back to `query_parser.py`. When the LLM returns valid JSON, rule-based `feature` snippets from the same message are still merged into that `ParseUpdate`. Official scoring may disable network; the rule-based path must remain sufficient. LLM string values are truncated to 180 characters.
+Default is **rules only** (same path as the public-set 0.8 run). Official scoring may disable the network.
 
 | Variable | Role |
 | --- | --- |
-| `OPENAI_API_KEY` / `LLM_API_KEY` | Enable LLM parsing |
-| `LLM_PARSER=0` | Force rule-based parser |
-| `LLM_MODEL` / `OPENAI_MODEL` | Default `gpt-4o-mini` |
-| `OPENAI_BASE_URL` | Default `https://api.openai.com/v1` |
-| `LLM_TIMEOUT` | Default 1.5s |
+| `LLM_PARSER=0` | Force rules only; disables DeepSeek |
+| `TECHJAM_PARSER_MODE=hybrid` | Allow DeepSeek when `DEEPSEEK_API_KEY` is set |
+| `DEEPSEEK_API_KEY` | Optional DeepSeek key (not read unless mode is `hybrid` or `deepseek`) |
+| `DEEPSEEK_PARSER_MODEL` | Default `deepseek-chat` |
+| `DEEPSEEK_BASE_URL` | Default `https://api.deepseek.com` |
+| `DEEPSEEK_PARSER_TIMEOUT_SECONDS` | Default 2.5s, capped at 8s |
 
-API keys must not be committed. Token counts are reported on `ParseResult` and forwarded in the Agent `usage` field.
+API keys must not be committed. Token counts are reported on `ParseResult` and forwarded in the Agent `usage` field. Missing key, timeout, or invalid JSON falls back to rules.
 
-The LLM extracts slots from the user message only. It is not used to generate product IDs from retrieved catalog text. Short color/material tokens from the model are kept; identifying catalog phrases still come from the rule merge when the LLM omits them.
+The model extracts slots from the user message only. It is not used to generate product IDs. Short color/material tokens from the model are kept; identifying catalog phrases still come from the rule merge.
 
 ---
 
@@ -136,12 +141,21 @@ Use Python 3.10+. `tests.test_memory` covers Assignment 3. `tests.test_understan
 
 ---
 
-## Pending
+## Constraint taxonomy
 
-- Team spec files (`intent_classifier.py`, `constraint_parser.py`, `query_rewriter.py`) are not split out; logic lives in the two parsers above.
-- Intent has no confidence score.
-- Semicolon-joined customer replies can split a single catalog feature into fragments; ranking also matches the raw user message, which is outside this package.
-- The LLM path is untested against a live API in CI (mocks only).
-- Hard / soft / negative constraints use Memory ops in a basic way, not a full constraint taxonomy.
+`constraint_kind(slot, op)` labels each Memory update without changing the Memory contract:
+
+- `hard`: brand, color, size, price, rating (`set` / `add`)
+- `soft`: material, style, feature, use_case (`set` / `add`)
+- `negative`: `exclude` (not black, don't want leather, without polyester)
+- `decline`: explicit no-preference
+- `clear`: remove / clear of a previous slot
+- `task`: category / product type
+
+`classify_intent(message, parsed)` returns `(Intent, confidence)`. Confidence is on `ParseResult`; Memory still receives only `intent` so an unclear turn does not overwrite the session with `unknown`.
+
+`rewrite_queries(message, parsed, search_context)` builds at most eight retrieval strings (category, category+tokens, catalog feature lines, cleaned message). The Agent prepends these to `SearchContext.queries`.
+
+Live DeepSeek calls are not part of CI (mocks only).
 
 Catalog ProductStore (Assignment 1), hybrid/semantic retrieval (Assignment 4), and fusion/reranking (Assignment 5) are out of scope for this package.
