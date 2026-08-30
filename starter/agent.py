@@ -129,6 +129,49 @@ def _retrieval_context(message: str, state: Any) -> SearchContext:
     )
 
 
+def _same_value(left: object, right: object) -> bool:
+    if left is None or right is None:
+        return left is right
+    return " ".join(str(left).split()).casefold() == " ".join(str(right).split()).casefold()
+
+
+def _scope_override_update(parsed: ParseUpdate, current: CurrentState) -> ParseUpdate:
+    """Keep a preference override local unless it explicitly starts a new task.
+
+    The parser uses ``reset_task`` for both a same-task phrase such as
+    "ignore my earlier preference" and a genuine category replacement. Memory's
+    reset operation intentionally clears the whole shopping task, so applying it
+    to the first case discards useful constraints gathered on earlier turns.
+    """
+    if not parsed.reset_task:
+        return parsed
+
+    direct_values = {
+        "category": current.category,
+        "product_type": current.product_type,
+    }
+    starts_new_task = any(
+        update.slot in direct_values
+        and update.op is UpdateOperation.SET
+        and not _same_value(update.value, direct_values[update.slot])
+        for update in parsed.updates
+    )
+    if starts_new_task:
+        return parsed
+
+    return ParseUpdate(
+        session_id=parsed.session_id,
+        intent=parsed.intent,
+        # Scalar SET operations already replace the named slot. ADD operations
+        # are intentionally preserved: the generic feature slot can contain
+        # several independent requirements, and the utterance does not identify
+        # which earlier item should be removed.
+        updates=parsed.updates,
+        reset_task=False,
+        source_turn=parsed.source_turn,
+    )
+
+
 def _default_cache_dir() -> Path | None:
     cache_dir = Path(".cache/retrieval")
     try:
@@ -170,11 +213,16 @@ class Agent:
         ):
             raise ValueError("candidate_limit exceeds retriever capacity")
         self.candidate_limit = candidate_limit
+        # Keep a bounded set of candidates already admitted for the active
+        # shopping task.  Only identifiers are retained: old retrieval scores
+        # must not influence ranking after the dialogue state changes.
+        self._candidate_history: dict[str, tuple[int, tuple[str, ...]]] = {}
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         # CurrentState stores the active shopping task, not catalog records or
         # raw user history. Replacing it is the session-reset invariant.
         self.memory.reset_state(session_id)
+        self._candidate_history.pop(session_id, None)
 
     def apply_update(self, parsed: ParseUpdate | dict) -> CurrentState:
         """Apply a structured Dialogue-module update to session memory."""
@@ -209,6 +257,50 @@ class Agent:
             candidates.append(payload)
         return candidates
 
+    def _admit_candidate_history(
+        self,
+        session_id: str,
+        task_version: int,
+        candidates: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Preserve candidate recall across turns of the same shopping task.
+
+        A later clarification may produce more lexical queries than the fixed
+        retrieval budget can admit.  Products seen on an earlier turn remain
+        eligible for current-state reranking, but receive no inherited source
+        score.  A real task reset starts a fresh history.
+        """
+        previous_version, previous_ids = self._candidate_history.get(
+            session_id,
+            (task_version, ()),
+        )
+        if previous_version != task_version:
+            previous_ids = ()
+
+        seen = {
+            str(candidate.get("parent_asin", "")).strip()
+            for candidate in candidates
+            if str(candidate.get("parent_asin", "")).strip()
+        }
+        for parent_asin in previous_ids:
+            if parent_asin in seen or parent_asin not in self.store:
+                continue
+            payload = self._product_payload(parent_asin)
+            payload["source_scores"] = {}
+            payload["source_ranks"] = {}
+            candidates.append(payload)
+            seen.add(parent_asin)
+
+        current_ids = tuple(
+            str(candidate["parent_asin"])
+            for candidate in candidates
+            if candidate.get("parent_asin")
+        )
+        history_limit = self.candidate_limit * 2
+        retained_ids = tuple(dict.fromkeys((*previous_ids, *current_ids)))[:history_limit]
+        self._candidate_history[session_id] = (task_version, retained_ids)
+        return candidates
+
     def respond(
         self,
         session_id: str,
@@ -229,20 +321,14 @@ class Agent:
             search_context=retrieval_state,
         )
         parsed = parse_result.parsed
+        scoped_override = False
         if parsed is not None:
-            if parsed.reset_task:
-                current = self.memory.get_state(session_id)
-                if current.category and not any(update.slot == "category" for update in parsed.updates):
-                    parsed = ParseUpdate(
-                        session_id=parsed.session_id,
-                        intent=parsed.intent,
-                        updates=(
-                            StateUpdate("category", UpdateOperation.SET, current.category),
-                            *parsed.updates,
-                        ),
-                        reset_task=True,
-                        source_turn=parsed.source_turn,
-                    )
+            parser_requested_reset = parsed.reset_task
+            parsed = _scope_override_update(
+                parsed,
+                self.memory.get_state(session_id),
+            )
+            scoped_override = parser_requested_reset and not parsed.reset_task
             try:
                 self.memory.apply_update(parsed)
             except (TypeError, ValueError):
@@ -280,6 +366,12 @@ class Agent:
             payloads.append(payload)
             seen.add(asin)
 
+        payloads = self._admit_candidate_history(
+            session_id,
+            self.memory.get_state(session_id).task_version,
+            payloads,
+        )
+
         ranking = rank_candidates(ranking_context, payloads, top_k=top_k)
         recommendations = [
             {"parent_asin": item.parent_asin, "score": item.final_score}
@@ -301,10 +393,17 @@ class Agent:
             for attribute in clarify_order
             if attribute == "other" or state.status_for(attribute) is AttributeStatus.UNKNOWN
         ]
-        ask_attribute = self.memory.get_or_record_asked_attribute(
-            session_id,
-            turn,
-            clarify_candidates,
+        # A same-task override can invalidate the previous dialogue path. Ask a
+        # broad follow-up once so undisclosed constraints are not skipped merely
+        # because "other" was asked before the preference changed.
+        ask_attribute = (
+            "other"
+            if scoped_override
+            else self.memory.get_or_record_asked_attribute(
+                session_id,
+                turn,
+                clarify_candidates,
+            )
         )
         if ask_attribute == "other":
             message = "Is there anything else that matters for this product?"
