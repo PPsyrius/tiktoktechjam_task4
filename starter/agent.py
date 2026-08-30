@@ -348,8 +348,10 @@ class Agent:
             limit=max(min(self.candidate_limit, RETRIEVAL_POOL_SIZE), top_k),
         )
         ranking_context = search_context_from_state(retrieval_state)
+        snippet_phrases = flatten_phrases(ranking_context.get("hard_constraints"))
+        snippet_phrases.extend(flatten_phrases(ranking_context.get("soft_preferences")))
         snippet_hits = self.snippets.search(
-            ranking_context.get("hard_constraints") or [],
+            snippet_phrases,
             message=user_message,
             limit=SNIPPET_POOL_SIZE,
         )

@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from starter.memory.models import NUMERIC_SLOTS
 from starter.snippet_index import flatten_phrases, fold_text, fold_variants
 
 
@@ -36,12 +37,21 @@ def _product_text(product: dict[str, Any]) -> str:
 
 
 def _constraint_phrases(search_context: dict[str, Any]) -> list[str]:
-    phrases = flatten_phrases(search_context.get("hard_constraints"))
-    phrases.extend(flatten_phrases(search_context.get("soft_preferences")))
+    def textual_phrases(value: object) -> list[str]:
+        if not isinstance(value, dict):
+            return flatten_phrases(value)
+        phrases: list[str] = []
+        for field, field_value in value.items():
+            if field not in NUMERIC_SLOTS:
+                phrases.extend(flatten_phrases(field_value))
+        return phrases
+
+    phrases = textual_phrases(search_context.get("hard_constraints"))
+    phrases.extend(textual_phrases(search_context.get("soft_preferences")))
     constraints = search_context.get("constraints")
     if isinstance(constraints, dict):
-        phrases.extend(flatten_phrases(constraints.get("hard")))
-        phrases.extend(flatten_phrases(constraints.get("soft")))
+        phrases.extend(textual_phrases(constraints.get("hard")))
+        phrases.extend(textual_phrases(constraints.get("soft")))
     category = search_context.get("category")
     if isinstance(category, str) and category.strip():
         phrases.append(category.strip())

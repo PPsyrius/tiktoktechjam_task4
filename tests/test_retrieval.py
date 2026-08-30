@@ -10,7 +10,7 @@ from starter.agent import Agent
 from starter.catalog import ProductStore
 from starter.reranker import rank_candidates
 from starter.retrieval import Retriever, search_context_from_state
-from starter.snippet_index import SnippetIndex
+from starter.snippet_index import SnippetIndex, flatten_phrases
 
 
 def write_catalog(path: Path) -> None:
@@ -73,17 +73,46 @@ class RetrievalTest(unittest.TestCase):
         result = rank_candidates(search_context, pool, top_k=10)
         self.assertEqual(result.items[0].parent_asin, "B_BLACK")
 
-    def test_search_context_flattens_memory_state(self) -> None:
+    def test_search_context_preserves_and_flattens_multi_value_constraints(self) -> None:
         context = search_context_from_state({
             "intent": "buying",
             "category": "running shoes",
             "product_type": None,
-            "hard_constraints": {"color": ["black"], "price_max": 120},
-            "soft_preferences": {"material": ["cotton"]},
+            "hard_constraints": {"color": ["black", "blue"], "price_max": 120},
+            "soft_preferences": {"material": ["cotton", "linen"]},
             "excluded": {},
         })
-        self.assertEqual(context["hard_constraints"], ["black", "cotton"])
+        self.assertEqual(
+            context["hard_constraints"],
+            {"color": ["black", "blue"], "price_max": 120},
+        )
+        self.assertEqual(
+            context["soft_preferences"],
+            {"material": ["cotton", "linen"]},
+        )
+        self.assertEqual(
+            flatten_phrases(context["hard_constraints"]["color"]),
+            ["black", "blue"],
+        )
+        self.assertNotIn("['black', 'blue']", flatten_phrases(context["hard_constraints"]))
         self.assertEqual(context["intent"], "buying")
+
+    def test_ranking_matches_each_multi_value_constraint_individually(self) -> None:
+        context = search_context_from_state({
+            "hard_constraints": {"color": ["black", "blue"], "price_max": 120},
+            "soft_preferences": {"material": ["cotton", "linen"]},
+        })
+        result = rank_candidates(context, [{
+            "parent_asin": "A",
+            "title": "Black and blue cotton linen shoe",
+            "price": 100,
+        }])
+
+        self.assertEqual(
+            result.items[0].matched_preferences,
+            ["black", "blue", "cotton", "linen"],
+        )
+        self.assertIn("price_pass", result.items[0].reason_codes)
 
     def test_retriever_can_consume_product_store_without_reading_catalog(self) -> None:
         store = ProductStore.from_jsonl(self.catalog_path)

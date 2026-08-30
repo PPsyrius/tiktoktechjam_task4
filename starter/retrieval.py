@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 import sqlite3
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Any
 from starter.catalog import ProductStore
 from starter.catalog.feature_extractor import value_to_text as flatten_text
 from starter.memory.models import RetrievalState
+from starter.snippet_index import flatten_phrases
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -36,16 +38,6 @@ def query_terms(*texts: str) -> list[str]:
     return terms
 
 
-def _string_phrases(mapping: dict[str, Any] | None) -> list[str]:
-    phrases: list[str] = []
-    for value in (mapping or {}).values():
-        items = value if isinstance(value, list) else [value]
-        for item in items:
-            if isinstance(item, str) and item.strip():
-                phrases.append(item.strip())
-    return phrases
-
-
 def search_context_from_state(state: RetrievalState | dict[str, Any]) -> dict[str, Any]:
     """Adapt Memory RetrievalState into the ranking SearchContext shape."""
     payload = state.to_dict() if isinstance(state, RetrievalState) else dict(state)
@@ -59,9 +51,9 @@ def search_context_from_state(state: RetrievalState | dict[str, Any]) -> dict[st
         "intent": payload.get("intent"),
         "category": payload.get("category"),
         "product_type": payload.get("product_type"),
-        "hard_constraints": _string_phrases(hard_constraints) + _string_phrases(soft_preferences),
-        "soft_preferences": soft_preferences,
-        "excluded": payload.get("excluded") or {},
+        "hard_constraints": copy.deepcopy(hard_constraints),
+        "soft_preferences": copy.deepcopy(soft_preferences),
+        "excluded": copy.deepcopy(payload.get("excluded") or {}),
     }
 
 
@@ -117,12 +109,8 @@ class Retriever:
         elif isinstance(search_context, dict):
             extra_texts.append(str(search_context.get("category") or ""))
             extra_texts.append(str(search_context.get("product_type") or ""))
-            hard = search_context.get("hard_constraints")
-            if isinstance(hard, list):
-                extra_texts.extend(str(item) for item in hard)
-            elif isinstance(hard, dict):
-                extra_texts.extend(_string_phrases(hard))
-            extra_texts.extend(_string_phrases(search_context.get("soft_preferences") or {}))
+            extra_texts.extend(flatten_phrases(search_context.get("hard_constraints")))
+            extra_texts.extend(flatten_phrases(search_context.get("soft_preferences")))
 
         terms = query_terms(*extra_texts)
         if not terms:
