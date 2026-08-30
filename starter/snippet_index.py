@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
 import re
 from collections import defaultdict
-from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from retrieval.product_store import ProductStore
 
@@ -78,15 +76,15 @@ def fold_variants(text: str) -> list[str]:
     return unique
 
 
-def _record_snippets(row: dict[str, Any]) -> list[str]:
+def _record_snippets(row: Mapping[str, Any]) -> list[str]:
     snippets: list[str] = []
     features = row.get("features") or []
-    if isinstance(features, list):
+    if isinstance(features, (list, tuple)):
         snippets.extend(str(item) for item in features if item not in (None, ""))
     elif features not in (None, ""):
         snippets.append(str(features))
     details = row.get("details") or {}
-    if isinstance(details, dict):
+    if isinstance(details, Mapping):
         for key, value in details.items():
             if value in (None, ""):
                 continue
@@ -102,16 +100,14 @@ def _record_snippets(row: dict[str, Any]) -> list[str]:
 class SnippetIndex:
     """Exact catalog lookup for disclosed requirement snippets and raw user text."""
 
-    def __init__(self, store: ProductStore, catalog_path: str | Path | None = None) -> None:
+    def __init__(self, store: ProductStore) -> None:
         self.store = store
         self.folded: dict[str, str] = {
-            asin: fold_text(product.search_text) for asin, product in store.products.items()
+            asin: fold_text("\n".join(product.fields))
+            for asin, product in store.products.items()
         }
         self.exact: dict[str, set[str]] = defaultdict(set)
-        if catalog_path is not None and Path(catalog_path).exists():
-            self._index_catalog(Path(catalog_path))
-        else:
-            self._index_store()
+        self._index_store()
         self.needles: list[tuple[str, tuple[str, ...]]] = [
             (snippet, tuple(sorted(asins)))
             for snippet, asins in self.exact.items()
@@ -123,25 +119,12 @@ class SnippetIndex:
             if len(variant) >= MIN_EXACT_CHARS:
                 self.exact[variant].add(asin)
 
-    def _index_catalog(self, path: Path) -> None:
-        if path.suffix == ".gz":
-            import gzip
-            handle = gzip.open(path, "rt", encoding="utf-8")
-        else:
-            handle = path.open(encoding="utf-8")
-        with handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                asin = str(row.get("parent_asin") or "").strip()
-                if asin not in self.store:
-                    continue
-                for snippet in _record_snippets(row):
-                    self._add(asin, snippet)
-
     def _index_store(self) -> None:
         for asin, product in self.store.products.items():
+            if product.raw:
+                for snippet in _record_snippets(product.raw):
+                    self._add(asin, snippet)
+                continue
             for field in product.fields:
                 self._add(asin, field)
                 for part in SPLIT_RE.split(field):

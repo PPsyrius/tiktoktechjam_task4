@@ -675,6 +675,7 @@ class AgentMemoryIntegrationTest(unittest.TestCase):
         self.agent = Agent(self.catalog_path)
 
     def tearDown(self) -> None:
+        self.agent.close()
         self.temporary_directory.cleanup()
 
     def test_agent_reset_update_state_and_retrieval_interface(self) -> None:

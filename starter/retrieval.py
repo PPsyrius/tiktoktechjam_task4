@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 from pathlib import Path
 from typing import Any
 
+from starter.catalog import ProductStore
+from starter.catalog.feature_extractor import value_to_text as flatten_text
 from starter.memory.models import RetrievalState
 
 
@@ -18,16 +19,6 @@ STOPWORDS = {
 BM25_WEIGHTS = (0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
 DEFAULT_POOL_SIZE = 50
 MAX_QUERY_TERMS = 40
-
-
-def flatten_text(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, dict):
-        return " ".join(f"{key} {item}" for key, item in value.items())
-    if isinstance(value, list):
-        return " ".join(str(item) for item in value)
-    return str(value)
 
 
 def query_terms(*texts: str) -> list[str]:
@@ -86,8 +77,14 @@ def _positive_bm25(raw_rank: object) -> float:
 class Retriever:
     """Keyword BM25 retrieval that emits a Candidate Pool for rank_candidates()."""
 
-    def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
+    def __init__(
+        self,
+        catalog_path: str | Path = "data/catalog.jsonl",
+        *,
+        store: ProductStore | None = None,
+    ) -> None:
         self.catalog_path = Path(catalog_path)
+        self.store = store or ProductStore.from_jsonl(self.catalog_path)
         self.connection = sqlite3.connect(":memory:")
         self._build_index()
 
@@ -99,23 +96,11 @@ class Retriever:
             "tokenize='unicode61 remove_diacritics 2')"
         )
         batch: list[tuple[str, str, str, str, str, str, str]] = []
-        with self.catalog_path.open(encoding="utf-8") as handle:
-            for line in handle:
-                product = json.loads(line)
-                batch.append(
-                    (
-                        str(product["parent_asin"]),
-                        flatten_text(product.get("title")),
-                        flatten_text(product.get("categories")),
-                        flatten_text(product.get("features")),
-                        flatten_text(product.get("details")),
-                        flatten_text(product.get("store")),
-                        flatten_text(product.get("description")),
-                    )
-                )
-                if len(batch) >= 1000:
-                    cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
-                    batch.clear()
+        for product in self.store:
+            batch.append((product.parent_asin, *product.fields))
+            if len(batch) >= 1000:
+                cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+                batch.clear()
         if batch:
             cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
         self.connection.commit()
@@ -168,3 +153,6 @@ class Retriever:
                 "source_ranks": {"bm25": index},
             })
         return candidates
+
+    def close(self) -> None:
+        self.connection.close()

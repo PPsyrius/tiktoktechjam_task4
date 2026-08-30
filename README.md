@@ -6,6 +6,27 @@ Current branch: `main`
 
 Last updated: `2026-08-30`
 
+## Part 1 catalog data layer
+
+The canonical catalog pipeline now lives in `starter/catalog/`:
+
+```text
+catalog.jsonl -> CatalogLoader -> FeatureExtractor -> Product
+              -> CatalogCache -> ProductStore -> Retrieval / Rerank
+```
+
+Both formal retrieval implementations consume `ProductStore`; neither owns a
+separate JSON parser. Run the real-catalog profiler and build the reusable
+catalog/FTS5 caches with:
+
+```bash
+python3 -m scripts.profile_catalog --catalog data/catalog.jsonl
+python3 -m retrieval.build_index --catalog data/catalog.jsonl --cache-dir .cache/retrieval
+```
+
+The Product schema, measured field coverage, normalization rules, and cache
+contract are documented in [`docs/catalog_data.md`](docs/catalog_data.md).
+
 ## Goal
 
 This branch contains the current integrated shopping agent pipeline.
@@ -47,6 +68,11 @@ Core reranking files:
 Implemented:
 
 - hybrid retrieval is wired into `starter/agent.py`
+- canonical immutable Product and read-only ProductStore
+- deterministic profiling, normalization, attribute extraction, and search text
+- content-addressed catalog and FTS5 caches with explicit corruption failures
+- Memory state to SearchContext integration
+- lexical and structured candidate retrieval
 - candidate deduplication and source-score merging are working
 - snippet evidence is connected to retrieval and reranking
 - same-task override handling is stabilized
@@ -56,6 +82,7 @@ Implemented:
 - final ranking returns deterministic order by `final_score` then `parent_asin`
 - clarification prompts are driven by memory state and override handling
 - regression tests cover retrieval, understanding, memory, exclusions, and override behavior
+- official 200-session evaluator and unit tests run end to end
 
 Not integrated yet:
 
@@ -67,12 +94,6 @@ Not integrated yet:
 
 ## Local Setup
 
-From the repository root:
-
-```bash
-cd /Users/macbook/projects/tiktok/tiktoktechjam_task4
-```
-
 Prepare the catalog once:
 
 ```bash
@@ -82,7 +103,7 @@ gzip -dk ParticipationKit/catalog.jsonl.gz
 mv ParticipationKit/catalog.jsonl data/catalog.jsonl
 ```
 
-Run the official baseline evaluator:
+Run the current integrated evaluator:
 
 ```bash
 python3 -m evaluator.local_evaluator

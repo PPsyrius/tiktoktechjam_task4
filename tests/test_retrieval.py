@@ -7,8 +7,10 @@ import unittest
 from pathlib import Path
 
 from starter.agent import Agent
+from starter.catalog import ProductStore
 from starter.reranker import rank_candidates
 from starter.retrieval import Retriever, search_context_from_state
+from starter.snippet_index import SnippetIndex
 
 
 def write_catalog(path: Path) -> None:
@@ -52,6 +54,7 @@ class RetrievalTest(unittest.TestCase):
         self.retriever = Retriever(self.catalog_path)
 
     def tearDown(self) -> None:
+        self.retriever.close()
         self.temporary_directory.cleanup()
 
     def test_candidate_pool_matches_ranking_contract(self) -> None:
@@ -82,6 +85,28 @@ class RetrievalTest(unittest.TestCase):
         self.assertEqual(context["hard_constraints"], ["black", "cotton"])
         self.assertEqual(context["intent"], "buying")
 
+    def test_retriever_can_consume_product_store_without_reading_catalog(self) -> None:
+        store = ProductStore.from_jsonl(self.catalog_path)
+        retriever = Retriever(
+            self.catalog_path.with_name("does-not-exist.jsonl"),
+            store=store,
+        )
+        self.addCleanup(retriever.close)
+
+        self.assertIs(retriever.store, store)
+        self.assertEqual(retriever.retrieve("running shoe")[0]["parent_asin"], "B_BLACK")
+
+    def test_snippet_index_reads_frozen_product_raw_fields(self) -> None:
+        store = ProductStore.from_records(({
+            "parent_asin": "A",
+            "features": ["Rare Requirement Phrase"],
+            "details": {"Closure Type": "Button"},
+        },))
+        index = SnippetIndex(store)
+
+        self.assertEqual(index.search(("Rare Requirement Phrase",))[0]["parent_asin"], "A")
+        self.assertEqual(index.search(("Closure Type: Button",))[0]["parent_asin"], "A")
+
 
 class AgentRetrievalPipelineTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -92,6 +117,7 @@ class AgentRetrievalPipelineTest(unittest.TestCase):
         self.agent = Agent(self.catalog_path)
 
     def tearDown(self) -> None:
+        self.agent.close()
         self.temporary_directory.cleanup()
 
     def test_agent_parses_message_then_ranks_with_section5(self) -> None:
@@ -232,6 +258,7 @@ import unittest
 from retrieval import (Candidate, Constraint, HybridRetriever, ProductStore,
                        RetrievalConfig, SearchContext, SourceHit)
 from retrieval.bm25_retriever import BM25Retriever, terms
+from retrieval.bm25_retriever import BM25CacheError
 from retrieval.merge import interleave
 from retrieval.product_store import constraint_status
 from retrieval.structured_retriever import StructuredRetriever
@@ -266,10 +293,11 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(constraint_status(self.store["B"], Constraint("price", maximum=80)), "fail")
         self.assertEqual(constraint_status(self.store["C"], Constraint("material", ("cotton",))), "unknown")
 
-    def test_does_not_guess_brand_or_material(self):
+    def test_inferred_material_is_not_promoted_to_a_structured_fact(self):
         store = ProductStore.from_records([{"parent_asin": "X", "title": "leather shoe", "store": "shop"}])
         self.assertNotIn("brand", store["X"].attributes)
         self.assertNotIn("material", store["X"].attributes)
+        self.assertEqual(store["X"].material, ("leather",))
 
     def test_store_is_read_only_after_fingerprinting(self):
         with self.assertRaises(TypeError):
@@ -467,6 +495,27 @@ class RetrievalTests(unittest.TestCase):
             third = BM25Retriever(ProductStore.from_records(changed), cache_dir=directory)
             self.assertNotEqual(third.cache_path, path)
             third.close()
+
+    def test_corrupt_bm25_cache_fails_loudly_and_can_be_rebuilt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = BM25Retriever(self.store, cache_dir=directory)
+            path = first.cache_path
+            first.close()
+            path.write_bytes(b"not a sqlite database")
+
+            with self.assertRaises(BM25CacheError):
+                BM25Retriever(self.store, cache_dir=directory)
+
+            rebuilt = BM25Retriever(self.store, cache_dir=directory, rebuild_cache=True)
+            self.assertFalse(rebuilt.cache_hit)
+            self.assertGreater(len(rebuilt.search(SearchContext(queries=("running",)), 4)), 0)
+            rebuilt.close()
+
+    def test_product_store_compatibility_export_is_canonical(self):
+        from retrieval import ProductStore as CompatibilityStore
+        from starter.catalog import ProductStore as CanonicalStore
+
+        self.assertIs(CompatibilityStore, CanonicalStore)
 
     def test_agent_official_contract_and_sessions(self):
         agent = Agent(retriever=self.retriever)

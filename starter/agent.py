@@ -4,7 +4,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from retrieval import Constraint, HybridRetriever, ProductStore, SearchContext
+from retrieval import Constraint, HybridRetriever, SearchContext
+from starter.catalog import ProductStore
 from starter.memory import (
     AttributeStatus,
     CurrentState,
@@ -196,13 +197,18 @@ class Agent:
         self.memory = MemoryService()
         resolved_cache = cache_dir if cache_dir is not None else _default_cache_dir()
         self.retriever = retriever or HybridRetriever(
-            ProductStore.from_jsonl(self.catalog_path), cache_dir=resolved_cache,
+            ProductStore.from_jsonl(
+                self.catalog_path,
+                cache_dir=(
+                    Path(resolved_cache) / "catalog"
+                    if resolved_cache is not None
+                    else None
+                ),
+            ),
+            cache_dir=resolved_cache,
         )
         self.store = self.retriever.store
-        self.snippets = SnippetIndex(
-            self.store,
-            catalog_path=self.catalog_path if retriever is None else None,
-        )
+        self.snippets = SnippetIndex(self.store)
         # Legacy local experiments reuse the BM25 connection for diagnostics.
         self.connection = self.retriever.bm25.connection if self.retriever.bm25 else None
         max_candidates = self.retriever.config.max_candidates

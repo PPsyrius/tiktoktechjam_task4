@@ -12,10 +12,11 @@ Optional dense route: a Python 3.10+ environment, NumPy, Sentence Transformers,
 an existing local model, and a prebuilt vector asset.
 No model is bundled or automatically downloaded.
 
-`starter/agent.py` is a runnable adapter. Its current-message-to-context
-conversion and first-10 slice are temporary, **not** task 2/3/5 implementations.
-Structured retrieval needs upstream constraints; running the adapter alone does
-not activate those constraints.
+`starter/agent.py` is the integrated runnable entrypoint. It converts current
+Memory state into `SearchContext`, passes active constraints into structured
+retrieval, and sends the candidate pool to the final reranker. The conversion is
+still an integration adapter; the retrieval package itself does not own dialogue
+parsing, conversation state, question selection, or final ranking.
 
 ## Quick start (repository root)
 
@@ -42,7 +43,8 @@ Use new result filenames to preserve experiments; existing output files are over
 ## Public contract
 
 ```python
-from retrieval import Constraint, HybridRetriever, ProductStore, SearchContext
+from retrieval import Constraint, HybridRetriever, SearchContext
+from starter.catalog import ProductStore
 
 # Task 1 may instead provide ProductStore.from_records(normalized_records).
 store = ProductStore.from_jsonl("ParticipationKit/catalog.jsonl.gz")
@@ -98,11 +100,12 @@ objects directly. ProductStore is read-only after construction, preserving index
 | Task 4 | Index construction/loading, candidate retrieval, deduplication and admission. |
 | Task 5 | Cross-source normalization/fusion, detailed constraint scoring, final Top 10. |
 
-The ProductStore here is a compatibility adapter, not a second cleaning project.
-Input retains official text fields. Optional `attributes` overrides explicit detail
-fields. Category paths, exact detail keys (Color/Material/etc.) and scalar prices
-are supported. Store names are not assumed to be brands. Free text is not treated
-as a reliable extracted attribute.
+`starter.catalog.ProductStore` is the canonical Part 1 data layer. The
+`retrieval.ProductStore` name remains as a compatibility re-export, not a second
+cleaning implementation. It preserves the official text fields while exposing
+normalized category paths, explicit details, conservative rule-extracted
+attributes, scalar prices, ratings, deterministic `search_text`, and the raw
+record. Store names are never assumed to be brands. See `docs/catalog_data.md`.
 
 Task 1 may generate embeddings if agreed, but model/text versions, ID mapping and
 asset formats must be coordinated with task 4. Built-in assets fingerprint both.
@@ -132,8 +135,9 @@ Opt-in global filtering is bounded by route depth, not exhaustive filtered searc
 Every route can be disabled via RetrievalConfig. Semantic startup failures and
 runtime route exceptions are visible in diagnostics; other routes continue.
 Core catalog/index construction errors fail loudly. FTS5 caches are content-
-fingerprinted, atomically created and reopened read-only. A corrupt derived cache
-must be explicitly rebuilt; it is not silently trusted.
+fingerprinted, atomically created, metadata/integrity checked, and reopened
+read-only. A corrupt derived cache must be explicitly rebuilt with
+`retrieval.build_index --rebuild-cache`; it is not silently trusted.
 
 One instance uses a SQLite connection tied to its creating thread. Reuse across
 sequential sessions, not concurrent threads; create one instance per worker.

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Tuple
 import math
 
-ATTRIBUTE_FIELDS = frozenset({"category", "brand", "material", "color", "size", "style", "use_case", "feature"})
+from starter.catalog.product import ATTRIBUTE_FIELDS
 
 
 @dataclass(frozen=True)
