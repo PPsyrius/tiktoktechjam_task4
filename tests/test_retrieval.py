@@ -209,6 +209,31 @@ class Section5RankingTests(unittest.TestCase):
             [candidate],
         )
         self.assertGreater(browsing.items[0].final_score, buying.items[0].final_score)
+
+    def test_snippet_rank_can_break_ties_between_similar_candidates(self) -> None:
+        result = rank_candidates(
+            {
+                "intent": "buying",
+                "hard_constraints": {},
+                "soft_preferences": {},
+                "excluded": {},
+            },
+            [
+                {
+                    "parent_asin": "A_SNIPPET",
+                    "title": "Running shoe",
+                    "source_scores": {"bm25": 2.0, "snippet": 50.0},
+                    "source_ranks": {"bm25": 2, "snippet": 1},
+                },
+                {
+                    "parent_asin": "B_BM25",
+                    "title": "Running shoe",
+                    "source_scores": {"bm25": 2.0},
+                    "source_ranks": {"bm25": 1},
+                },
+            ],
+        )
+        self.assertEqual(result.items[0].parent_asin, "A_SNIPPET")
 import gzip
 import importlib.util
 import json

@@ -15,6 +15,7 @@ from starter.memory import (
     UpdateOperation,
 )
 from starter.reranker import rank_candidates
+from starter.snippet_index import SnippetIndex, flatten_phrases
 from starter.understanding import parse_requirement
 
 
@@ -46,6 +47,7 @@ CLARIFY_ORDER = (
     "budget",
 )
 RETRIEVAL_POOL_SIZE = 50
+SNIPPET_POOL_SIZE = 400
 PRODUCT_TEXT_FIELDS = ("title", "categories", "features", "details", "store", "description")
 ATTRIBUTE_FIELDS = frozenset({
     "category", "brand", "material", "color", "size", "style", "use_case", "feature",
@@ -64,6 +66,12 @@ def _string_values(value: object) -> tuple[str, ...]:
         for item in (str(raw) for raw in _values(value))
         if item.strip()
     )
+
+
+def _constraint_phrases(state: Any) -> list[str]:
+    phrases = flatten_phrases(state.hard_constraints)
+    phrases.extend(flatten_phrases(state.soft_preferences))
+    return list(dict.fromkeys(phrase for phrase in phrases if isinstance(phrase, str) and phrase.strip()))
 
 
 def _retrieval_context(message: str, state: Any) -> SearchContext:
@@ -111,7 +119,7 @@ def _retrieval_context(message: str, state: Any) -> SearchContext:
 
 
 class Agent:
-    """Session memory, hybrid retrieval, and constraint-aware reranking."""
+    """Session memory, hybrid retrieval, snippet matching, and constraint-aware reranking."""
 
     def __init__(
         self,
@@ -127,6 +135,10 @@ class Agent:
             ProductStore.from_jsonl(self.catalog_path), cache_dir=cache_dir,
         )
         self.store = self.retriever.store
+        self.snippets = SnippetIndex(
+            self.store,
+            catalog_path=self.catalog_path if retriever is None else None,
+        )
         # Legacy local experiments reuse the BM25 connection for diagnostics.
         self.connection = self.retriever.bm25.connection if self.retriever.bm25 else None
         max_candidates = self.retriever.config.max_candidates
@@ -150,10 +162,20 @@ class Agent:
     def get_state(self, session_id: str) -> CurrentState:
         return self.memory.get_state(session_id)
 
+    def _product_payload(self, parent_asin: str) -> dict[str, Any]:
+        product = self.store[parent_asin]
+        payload = {
+            "parent_asin": parent_asin,
+            "attributes": dict(product.attributes),
+            "price": product.price,
+        }
+        payload.update(dict(zip(PRODUCT_TEXT_FIELDS, product.fields)))
+        return payload
+
     def _candidate_payloads(self, pool: object) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         for candidate in pool:
-            product = self.store[candidate.parent_asin]
+            payload = self._product_payload(candidate.parent_asin)
             source_scores: dict[str, float] = {}
             source_ranks: dict[str, int] = {}
             for hit in candidate.hits:
@@ -162,14 +184,8 @@ class Agent:
                     score = max(0.0, -score)
                 source_scores[hit.source] = max(source_scores.get(hit.source, 0.0), score)
                 source_ranks[hit.source] = min(source_ranks.get(hit.source, hit.rank), hit.rank)
-            payload = {
-                "parent_asin": candidate.parent_asin,
-                "source_scores": source_scores,
-                "source_ranks": source_ranks,
-                "attributes": dict(product.attributes),
-                "price": product.price,
-            }
-            payload.update(dict(zip(PRODUCT_TEXT_FIELDS, product.fields)))
+            payload["source_scores"] = source_scores
+            payload["source_ranks"] = source_ranks
             candidates.append(payload)
         return candidates
 
@@ -225,9 +241,35 @@ class Agent:
             "soft_preferences": retrieval_state.soft_preferences,
             "excluded": retrieval_state.excluded,
         }
+        payloads = self._candidate_payloads(pool)
+        seen = {item["parent_asin"] for item in payloads}
+        snippet_hits = self.snippets.search(
+            _constraint_phrases(retrieval_state),
+            message=user_message,
+            limit=SNIPPET_POOL_SIZE,
+        )
+        for hit in snippet_hits:
+            asin = hit["parent_asin"]
+            if asin in seen:
+                existing = next(item for item in payloads if item["parent_asin"] == asin)
+                source_scores = dict(existing.get("source_scores") or {})
+                source_ranks = dict(existing.get("source_ranks") or {})
+                for source, score in (hit.get("source_scores") or {}).items():
+                    source_scores[source] = max(source_scores.get(source, 0.0), float(score))
+                for source, rank in (hit.get("source_ranks") or {}).items():
+                    rank_value = int(rank)
+                    source_ranks[source] = min(source_ranks.get(source, rank_value), rank_value)
+                existing["source_scores"] = source_scores
+                existing["source_ranks"] = source_ranks
+                continue
+            payload = self._product_payload(asin)
+            payload["source_scores"] = dict(hit.get("source_scores") or {})
+            payload["source_ranks"] = dict(hit.get("source_ranks") or {})
+            payloads.append(payload)
+            seen.add(asin)
         ranking = rank_candidates(
             ranking_context,
-            self._candidate_payloads(pool),
+            payloads,
             top_k=top_k,
         )
         recommendations = [
