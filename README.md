@@ -1,17 +1,17 @@
 # TechJam Shopping Copilot
 
-Section 5 branch for `Candidate Fusion, Constraint Scoring, and Final Reranking`.
+Main branch with integrated retrieval, memory, and reranking updates.
 
-Current branch: `feature5`
+Current branch: `main`
 
-Last updated: `2026-08-29`
+Last updated: `2026-08-30`
 
 ## Goal
 
-This branch focuses on the last ranking stage of the shopping agent pipeline.
+This branch contains the current integrated shopping agent pipeline.
 Given a `SearchContext` from the memory/state module and a `Candidate Pool`
-from the retrieval module, Section 5 is responsible for producing the final
-Top 10 recommendations in a stable, constraint-aware order.
+from the retrieval module, the agent produces final Top 10 recommendations in
+a stable, constraint-aware order.
 
 High-level pipeline:
 
@@ -19,7 +19,7 @@ High-level pipeline:
 Catalog -> ParsedUpdate -> SearchContext -> Candidate Pool -> Ranked Top 10
 ```
 
-Section 5 owns the final step:
+The reranking stack owns the final step:
 
 ```text
 SearchContext + Candidate Pool -> Candidate Fusion -> Constraint Scoring -> Final Reranking -> Top 10
@@ -35,7 +35,7 @@ Core competition files:
 - `data/public_set.jsonl`: 200 public development sessions
 - `data/catalog.jsonl`: local catalog file, required for evaluation and ignored by Git
 
-Section 5 files added on this branch:
+Core reranking files:
 
 - `starter/score_normalizer.py`: normalizes source scores into comparable floats
 - `starter/candidate_fusion.py`: deduplicates candidates and merges source scores/ranks
@@ -46,24 +46,23 @@ Section 5 files added on this branch:
 
 Implemented:
 
-- Section 5 file structure is created
-- package-relative imports are in place
+- hybrid retrieval is wired into `starter/agent.py`
 - candidate deduplication and source-score merging are working
-- Section 5 is wired into `starter/agent.py`
+- snippet evidence is connected to retrieval and reranking
+- same-task override handling is stabilized
+- cross-turn candidate history is preserved within a task
 - hard constraints, soft preferences, and typed exclusions are scored separately
 - price constraints are scored structurally instead of only through text matching
-- Buying vs Browsing intent now uses different reranking weights
 - final ranking returns deterministic order by `final_score` then `parent_asin`
-- local smoke test passes for a simple hard-constraint example
-- regression tests cover soft-preference handling, budget scoring, exclusions, and intent-aware weighting
+- clarification prompts are driven by memory state and override handling
+- regression tests cover retrieval, understanding, memory, exclusions, and override behavior
 
 Not integrated yet:
 
 - there is no shared `SearchContext` or `Candidate Pool` contract file yet
-- `clarification_slot` / `ask_attribute` selection is not implemented yet
 - rating / review-count features are not implemented yet
-- clarification still follows the memory module's unknown-attribute order rather
-  than reranker uncertainty
+- clarification still follows the memory module's attribute order rather than
+  reranker uncertainty
 - semantic retrieval is optional and not enabled in the default local setup
 
 ## Local Setup
@@ -89,11 +88,12 @@ Run the official baseline evaluator:
 python3 -m evaluator.local_evaluator
 ```
 
-Current local metrics after Section 5 integration on `feature5`:
+Current local metrics on `main`:
 
-- `HitRate@10 = 0.64`
-- `MRR = 0.393935`
-- `MTTC = 6.635`
+- `HitRate@10 = 0.95`
+- `MRR = 0.649167`
+- `MTTC = 2.785`
+- `recommended_technical_score = 0.83405`
 
 These are full local public-set evaluator results for the current branch, not the
 original starter baseline in `docs/baseline_results.json`.
@@ -188,7 +188,7 @@ PY
 The expected behavior is that `A1` ranks above `A2` because it matches both
 hard constraints.
 
-Run the focused regression tests for today's Section 5 changes:
+Run the focused regression tests for the integrated pipeline:
 
 ```bash
 python3 -m unittest tests.test_retrieval tests.test_understanding tests.test_memory
@@ -199,7 +199,7 @@ python3 -m unittest tests.test_retrieval tests.test_understanding tests.test_mem
 1. Agree with Sections 3 and 4 on a stable `SearchContext` and `Candidate Pool` contract.
 2. Add product quality signals such as rating and review count.
 3. Add `clarification_slot` selection when top candidates are difficult to distinguish.
-4. Replace fallback text matching with richer structured attribute coverage from task 1 data normalization.
+4. Expand structured attribute coverage and product quality signals.
 5. Compare pool-size and route-ablation effects to separate retrieval gains from reranking gains.
 6. Package one reproducible semantic setup and re-measure end-to-end metrics.
 
