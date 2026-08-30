@@ -76,9 +76,16 @@ def _constraint_phrases(state: Any) -> list[str]:
     return list(dict.fromkeys(phrase for phrase in phrases if phrase.strip()))
 
 
-def _retrieval_context(message: str, state: Any) -> SearchContext:
+def _retrieval_context(
+    message: str,
+    state: Any,
+    query_rewrites: tuple[str, ...] | list[str] = (),
+) -> SearchContext:
     phrases = _constraint_phrases(state)
     queries: list[str] = []
+    for text in query_rewrites:
+        if isinstance(text, str) and text.strip():
+            queries.append(text.strip())
     for phrase in phrases:
         if len(phrase) >= 8:
             queries.append(phrase.strip())
@@ -122,10 +129,15 @@ def _retrieval_context(message: str, state: Any) -> SearchContext:
             if values:
                 constraints.append(Constraint(field, values, hard=True, negative=True))
 
+    mode = getattr(state.intent, "value", state.intent)
+    semantic_query = ""
+    if mode in {"browsing", "unknown"} and queries:
+        semantic_query = queries[0][:200]
     return SearchContext(
         queries=tuple(queries),
         constraints=tuple(constraints),
-        mode=state.intent.value,
+        mode=str(mode),
+        semantic_query=semantic_query,
     )
 
 
@@ -250,7 +262,11 @@ class Agent:
             else:
                 retrieval_state = self.memory.get_retrieval_state(session_id)
 
-        retrieval_context = _retrieval_context(user_message, retrieval_state)
+        retrieval_context = _retrieval_context(
+            user_message,
+            retrieval_state,
+            query_rewrites=parse_result.query_rewrites,
+        )
         pool = self.retriever.retrieve(
             retrieval_context,
             limit=max(min(self.candidate_limit, RETRIEVAL_POOL_SIZE), top_k),

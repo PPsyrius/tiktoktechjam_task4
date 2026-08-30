@@ -12,13 +12,15 @@ from starter.memory.models import (
     NUMERIC_SLOTS,
     ParseUpdate,
     RetrievalState,
+    UpdateOperation,
 )
-from starter.understanding.query_parser import parse_user_message
+from starter.understanding.query_parser import classify_intent, constraint_kind, parse_user_message
+from starter.understanding.query_rewriter import rewrite_queries
 
 
-DEFAULT_MODEL = "gpt-4o-mini"
-DEFAULT_TIMEOUT_SECONDS = 1.5
-DEFAULT_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+DEFAULT_DEEPSEEK_TIMEOUT_SECONDS = 2.5
+DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 SYSTEM_PROMPT = """\
 You extract shopping requirements from one customer message for a clothing catalog.
@@ -37,10 +39,13 @@ Rules:
 - slots: category, product_type, brand, color, size, price_min, price_max, rating_min, material, style, feature, use_case
 - ops: set, add, remove, clear, decline, exclude
 - decline has no value. Use it for "no preference" / "use your judgment".
+- exclude is for negation ("not black", "don't want leather", "without polyester").
+- remove/clear is for dropping an earlier slot ("forget about color").
 - price_min / price_max / rating_min must be numbers. Map budget-under-$X to price_max.
 - color/material should be short normalized tokens (black, cotton), not full sentences.
+- Also add the user's exact requirement phrase as feature when it is longer than one token.
 - Only include updates supported by this turn. Empty updates are allowed.
-- Do not invent constraints the user did not state.
+- Do not invent constraints the user did not state. Do not replace a long catalog line with a short token.
 
 Examples:
 User: I'm looking for running shoes. A key requirement is: cotton.
@@ -52,8 +57,11 @@ User: I'm looking for winter boots, but I'm still exploring.
 User: I don't have a preference for color; please use your judgment.
 {"intent":null,"reset_task":false,"updates":[{"slot":"color","op":"decline"}]}
 
-User: Actually, ignore my earlier preference. What I need is: black.
-{"intent":"buying","reset_task":true,"updates":[{"slot":"color","op":"set","value":"black"}]}
+User: Actually, ignore my earlier preference. What I need is: 100% Cotton Lightweight.
+{"intent":"buying","reset_task":true,"updates":[{"slot":"material","op":"set","value":"cotton"},{"slot":"feature","op":"add","value":"100% Cotton Lightweight"}]}
+
+User: I need Nike shoes, not black, under $80.
+{"intent":"buying","reset_task":false,"updates":[{"slot":"category","op":"set","value":"Nike shoes"},{"slot":"brand","op":"set","value":"Nike"},{"slot":"color","op":"exclude","value":"black"},{"slot":"price_max","op":"set","value":80}]}
 """
 
 
@@ -64,44 +72,52 @@ class ParseResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     error: str | None = None
+    intent_confidence: float = 0.0
+    constraint_kinds: tuple[str, ...] = ()
+    query_rewrites: tuple[str, ...] = ()
 
 
-def llm_enabled() -> bool:
+def _models_disabled() -> bool:
     flag = os.environ.get("LLM_PARSER", "1").strip().lower()
-    if flag in {"0", "false", "off", "no"}:
+    return flag in {"0", "false", "off", "no"}
+
+
+def deepseek_enabled() -> bool:
+    if _models_disabled():
         return False
-    return bool(api_key())
+    mode = os.environ.get("TECHJAM_PARSER_MODE", "rules").strip().lower()
+    if mode not in {"hybrid", "deepseek"}:
+        return False
+    return bool(deepseek_api_key())
 
 
-def api_key() -> str:
-    return (
-        os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("LLM_API_KEY")
-        or ""
-    ).strip()
+def deepseek_api_key() -> str:
+    return os.environ.get("DEEPSEEK_API_KEY", "").strip()
 
 
 def _timeout_seconds() -> float:
-    raw = os.environ.get("LLM_TIMEOUT", str(DEFAULT_TIMEOUT_SECONDS))
+    raw = os.environ.get(
+        "DEEPSEEK_PARSER_TIMEOUT_SECONDS",
+        str(DEFAULT_DEEPSEEK_TIMEOUT_SECONDS),
+    )
     try:
         return max(0.2, min(float(raw), 8.0))
     except ValueError:
-        return DEFAULT_TIMEOUT_SECONDS
+        return DEFAULT_DEEPSEEK_TIMEOUT_SECONDS
 
 
 def _model_name() -> str:
     return (
-        os.environ.get("LLM_MODEL")
-        or os.environ.get("OPENAI_MODEL")
-        or DEFAULT_MODEL
+        os.environ.get("DEEPSEEK_PARSER_MODEL")
+        or os.environ.get("DEEPSEEK_MODEL")
+        or DEFAULT_DEEPSEEK_MODEL
     ).strip()
 
 
 def _base_url() -> str:
     return (
-        os.environ.get("OPENAI_BASE_URL")
-        or os.environ.get("LLM_BASE_URL")
-        or DEFAULT_BASE_URL
+        os.environ.get("DEEPSEEK_BASE_URL")
+        or DEFAULT_DEEPSEEK_BASE_URL
     ).rstrip("/")
 
 
@@ -196,27 +212,46 @@ def parsed_update_from_llm(
 
 
 def _merge_rule_snippets(parsed: ParseUpdate, fallback: ParseUpdate | None) -> ParseUpdate:
-    if fallback is None or not fallback.updates:
+    """Keep rule catalog snippets, override, category, and declines the model dropped."""
+    if fallback is None:
         return parsed
     existing = {(update.slot, update.op, update.value) for update in parsed.updates}
-    extra = [
-        update
-        for update in fallback.updates
-        if update.slot == "feature" and (update.slot, update.op, update.value) not in existing
-    ]
-    if not extra:
+    existing_slot_ops = {(update.slot, update.op) for update in parsed.updates}
+    extra: list = []
+    for update in fallback.updates:
+        key = (update.slot, update.op, update.value)
+        if key in existing:
+            continue
+        if update.slot == "feature":
+            extra.append(update)
+        elif update.op in {
+            UpdateOperation.DECLINE,
+            UpdateOperation.EXCLUDE,
+            UpdateOperation.REMOVE,
+            UpdateOperation.CLEAR,
+        } and (update.slot, update.op, update.value) not in existing:
+            extra.append(update)
+        elif update.slot == "category" and not any(item.slot == "category" for item in parsed.updates):
+            extra.append(update)
+        elif update.slot in {"brand", "size", "price_min", "price_max"} and (
+            update.slot, update.op
+        ) not in existing_slot_ops:
+            extra.append(update)
+    reset_task = parsed.reset_task or fallback.reset_task
+    intent = parsed.intent or fallback.intent
+    if not extra and reset_task == parsed.reset_task and intent == parsed.intent:
         return parsed
     return ParseUpdate(
         session_id=parsed.session_id,
-        intent=parsed.intent,
+        intent=intent,
         updates=(*parsed.updates, *extra),
-        reset_task=parsed.reset_task,
+        reset_task=reset_task,
         source_turn=parsed.source_turn,
     )
 
 
 def complete_chat(user_prompt: str) -> dict[str, Any] | None:
-    key = api_key()
+    key = deepseek_api_key()
     if not key:
         return None
     body = json.dumps({
@@ -261,50 +296,103 @@ def complete_chat(user_prompt: str) -> dict[str, Any] | None:
     }
 
 
+def _apply_model_payload(
+    session_id: str,
+    user_message: str,
+    turn: int,
+    response: dict[str, Any],
+    source: str,
+    fallback: ParseUpdate | None,
+) -> ParseResult:
+    try:
+        payload = extract_json_object(response["content"])
+        parsed = parsed_update_from_llm(session_id, turn, payload)
+        if parsed.intent is not None or parsed.updates or parsed.reset_task:
+            parsed = _merge_rule_snippets(parsed, fallback)
+            return ParseResult(
+                parsed=parsed,
+                source=source,
+                prompt_tokens=response["prompt_tokens"],
+                completion_tokens=response["completion_tokens"],
+            )
+        return ParseResult(
+            parsed=fallback,
+            source="rules",
+            prompt_tokens=response["prompt_tokens"],
+            completion_tokens=response["completion_tokens"],
+            error="empty_llm_update",
+        )
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return ParseResult(
+            parsed=fallback,
+            source="rules",
+            prompt_tokens=response["prompt_tokens"],
+            completion_tokens=response["completion_tokens"],
+            error="invalid_llm_json",
+        )
+
+
+def _enrich_parse_result(
+    result: ParseResult,
+    user_message: str,
+    search_context: RetrievalState | dict[str, Any] | None,
+) -> ParseResult:
+    parsed = result.parsed
+    intent, confidence = classify_intent(user_message, parsed)
+    if parsed is None:
+        result.intent_confidence = confidence
+        result.constraint_kinds = ()
+        result.query_rewrites = rewrite_queries(user_message, None, search_context)
+        return result
+    if parsed.intent is None and intent is not Intent.UNKNOWN:
+        parsed = ParseUpdate(
+            session_id=parsed.session_id,
+            intent=intent,
+            updates=parsed.updates,
+            reset_task=parsed.reset_task,
+            source_turn=parsed.source_turn,
+        )
+        result.parsed = parsed
+        intent, confidence = classify_intent(user_message, parsed)
+    result.intent_confidence = confidence
+    result.constraint_kinds = tuple(
+        constraint_kind(update.slot, update.op) for update in parsed.updates
+    )
+    result.query_rewrites = rewrite_queries(user_message, parsed, search_context)
+    return result
+
+
 def parse_requirement(
     session_id: str,
     user_message: str,
     turn: int,
     search_context: RetrievalState | dict[str, Any] | None = None,
 ) -> ParseResult:
-    """Parse a turn with the LLM when configured; otherwise use the regex parser."""
-    if llm_enabled():
-        user_prompt = (
-            f"session_id: {session_id}\n"
-            f"turn: {turn}\n"
-            f"current_search_context: {_context_summary(search_context)}\n"
-            f"user_message: {user_message}"
+    """Rules always run. Optional DeepSeek may add slots; catalog snippets are kept."""
+    fallback = parse_user_message(session_id, user_message, turn)
+    if not deepseek_enabled():
+        return _enrich_parse_result(
+            ParseResult(parsed=fallback, source="rules"),
+            user_message,
+            search_context,
         )
-        response = complete_chat(user_prompt)
-        if response is not None:
-            try:
-                payload = extract_json_object(response["content"])
-                parsed = parsed_update_from_llm(session_id, turn, payload)
-                if parsed.intent is not None or parsed.updates or parsed.reset_task:
-                    fallback = parse_user_message(session_id, user_message, turn)
-                    parsed = _merge_rule_snippets(parsed, fallback)
-                    return ParseResult(
-                        parsed=parsed,
-                        source="llm",
-                        prompt_tokens=response["prompt_tokens"],
-                        completion_tokens=response["completion_tokens"],
-                    )
-                fallback = parse_user_message(session_id, user_message, turn)
-                return ParseResult(
-                    parsed=fallback,
-                    source="rules",
-                    prompt_tokens=response["prompt_tokens"],
-                    completion_tokens=response["completion_tokens"],
-                    error="empty_llm_update",
-                )
-            except (ValueError, TypeError, json.JSONDecodeError):
-                fallback = parse_user_message(session_id, user_message, turn)
-                return ParseResult(
-                    parsed=fallback,
-                    source="rules",
-                    prompt_tokens=response["prompt_tokens"],
-                    completion_tokens=response["completion_tokens"],
-                    error="invalid_llm_json",
-                )
-    parsed = parse_user_message(session_id, user_message, turn)
-    return ParseResult(parsed=parsed, source="rules")
+    user_prompt = (
+        f"session_id: {session_id}\n"
+        f"turn: {turn}\n"
+        f"current_search_context: {_context_summary(search_context)}\n"
+        f"user_message: {user_message}"
+    )
+    response = complete_chat(user_prompt)
+    if response is not None:
+        return _enrich_parse_result(
+            _apply_model_payload(
+                session_id, user_message, turn, response, "deepseek", fallback,
+            ),
+            user_message,
+            search_context,
+        )
+    return _enrich_parse_result(
+        ParseResult(parsed=fallback, source="rules"),
+        user_message,
+        search_context,
+    )
