@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from typing import Any, Iterable, Mapping
+from typing import Any
+from collections.abc import Iterable, Mapping
 
 from retrieval.product_store import ProductStore
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Optional
 import math
 
 from starter.catalog.product import ATTRIBUTE_FIELDS
@@ -11,9 +11,9 @@ from starter.catalog.product import ATTRIBUTE_FIELDS
 @dataclass(frozen=True)
 class Constraint:
     field: str
-    values: Tuple[str, ...] = ()  # OR within a field; AND between constraints.
-    minimum: Optional[float] = None
-    maximum: Optional[float] = None
+    values: tuple[str, ...] = ()  # OR within a field; AND between constraints.
+    minimum: float | None = None
+    maximum: float | None = None
     hard: bool = False
     negative: bool = False
 
@@ -41,8 +41,8 @@ class Constraint:
 
 @dataclass(frozen=True)
 class SearchContext:
-    queries: Tuple[str, ...] = ()
-    constraints: Tuple[Constraint, ...] = ()
+    queries: tuple[str, ...] = ()
+    constraints: tuple[Constraint, ...] = ()
     mode: str = "unknown"
     semantic_query: str = ""
 
@@ -73,7 +73,7 @@ class SourceHit:
 @dataclass(frozen=True)
 class Candidate:
     parent_asin: str
-    hits: Tuple[SourceHit, ...] = ()
+    hits: tuple[SourceHit, ...] = ()
 
 
 @dataclass
@@ -88,7 +88,7 @@ class RetrievalDiagnostics:
 
 @dataclass(frozen=True)
 class CandidatePool:
-    candidates: Tuple[Candidate, ...]
+    candidates: tuple[Candidate, ...]
     diagnostics: RetrievalDiagnostics
 
     def __iter__(self):

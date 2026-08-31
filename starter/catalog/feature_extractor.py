@@ -4,7 +4,8 @@ from __future__ import annotations
 import copy
 import math
 import re
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Optional
+from collections.abc import Iterable, Mapping
 
 from .product import ATTRIBUTE_FIELDS, TEXT_FIELDS, Product
 
@@ -63,7 +64,7 @@ def normalize_text(value: object) -> str:
     return " ".join(str(value).casefold().split())
 
 
-def parse_price(value: object) -> Optional[float]:
+def parse_price(value: object) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, str):
@@ -113,7 +114,7 @@ def _lexicon_matches(text: str, aliases: tuple[tuple[str, str], ...]) -> tuple[s
     }))
 
 
-def _canonical_brand(value: object) -> Optional[str]:
+def _canonical_brand(value: object) -> str | None:
     brand = _display_text(value)
     if not brand:
         return None

@@ -5,7 +5,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterator, Mapping
+from collections.abc import Iterator, Mapping
 
 
 class CatalogLoadError(ValueError):

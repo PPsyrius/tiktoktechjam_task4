@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Optional
+from collections.abc import Mapping
 
 
 TEXT_FIELDS = (
@@ -46,25 +47,25 @@ def _thaw(value: Any) -> Any:
 class Product:
     parent_asin: str
     title: str
-    category: Optional[str]
-    category_path: Tuple[str, ...]
-    brand: Optional[str]
-    price: Optional[float]
-    color: Tuple[str, ...]
-    size: Tuple[str, ...]
-    material: Tuple[str, ...]
-    style: Tuple[str, ...]
-    use_case: Tuple[str, ...]
-    feature: Tuple[str, ...]
-    features: Tuple[str, ...]
+    category: str | None
+    category_path: tuple[str, ...]
+    brand: str | None
+    price: float | None
+    color: tuple[str, ...]
+    size: tuple[str, ...]
+    material: tuple[str, ...]
+    style: tuple[str, ...]
+    use_case: tuple[str, ...]
+    feature: tuple[str, ...]
+    features: tuple[str, ...]
     description: str
     details: Mapping[str, Any]
-    store: Optional[str]
-    average_rating: Optional[float]
+    store: str | None
+    average_rating: float | None
     rating_number: int
     search_text: str
-    fields: Tuple[str, ...]
-    attributes: Mapping[str, Tuple[str, ...]]
+    fields: tuple[str, ...]
+    attributes: Mapping[str, tuple[str, ...]]
     raw: Mapping[str, Any]
 
     def __post_init__(self) -> None:
@@ -113,7 +114,7 @@ class Product:
         return payload
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "Product":
+    def from_dict(cls, payload: Mapping[str, Any]) -> Product:
         return cls(
             parent_asin=str(payload["parent_asin"]),
             title=str(payload.get("title") or ""),

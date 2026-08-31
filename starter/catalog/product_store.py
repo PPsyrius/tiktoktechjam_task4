@@ -6,7 +6,8 @@ import json
 from collections import defaultdict
 from pathlib import Path
 from types import MappingProxyType
-from typing import Iterable, Mapping, Optional
+from typing import Optional
+from collections.abc import Iterable, Mapping
 
 from .catalog_loader import CatalogLoader
 from .feature_extractor import FeatureExtractor, normalize_text
@@ -21,14 +22,14 @@ class ProductStore:
         self,
         products: Iterable[Product],
         *,
-        source_fingerprint: Optional[str] = None,
-        cache_path: Optional[Path] = None,
+        source_fingerprint: str | None = None,
+        cache_path: Path | None = None,
         cache_hit: bool = False,
     ) -> None:
         product_map: dict[str, Product] = {}
         category_index: dict[str, list[str]] = defaultdict(list)
         brand_index: dict[str, list[str]] = defaultdict(list)
-        digest = hashlib.sha256(f"{STORE_SCHEMA_VERSION}\n".encode("utf-8"))
+        digest = hashlib.sha256(f"{STORE_SCHEMA_VERSION}\n".encode())
         for product in products:
             if product.parent_asin in product_map:
                 raise ValueError("Missing or duplicate parent_asin: " + product.parent_asin)
@@ -67,9 +68,9 @@ class ProductStore:
         cls,
         records: Iterable[Mapping[str, object] | Product],
         *,
-        extractor: Optional[FeatureExtractor] = None,
-        source_fingerprint: Optional[str] = None,
-    ) -> "ProductStore":
+        extractor: FeatureExtractor | None = None,
+        source_fingerprint: str | None = None,
+    ) -> ProductStore:
         active_extractor = extractor or FeatureExtractor()
 
         def convert() -> Iterable[Product]:
@@ -85,7 +86,7 @@ class ProductStore:
         *,
         cache_dir: str | Path | None = None,
         rebuild_cache: bool = False,
-    ) -> "ProductStore":
+    ) -> ProductStore:
         if cache_dir is not None:
             from .catalog_cache import CatalogCache
             return CatalogCache(cache_dir).load_or_build(
@@ -98,7 +99,7 @@ class ProductStore:
             source_fingerprint=loader.source_fingerprint(),
         )
 
-    def get(self, parent_asin: str) -> Optional[Product]:
+    def get(self, parent_asin: str) -> Product | None:
         return self.products.get(parent_asin)
 
     def get_all(self) -> tuple[Product, ...]:
