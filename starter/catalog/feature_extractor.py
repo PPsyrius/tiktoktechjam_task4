@@ -9,6 +9,8 @@ from typing import Any, Iterable, Mapping, Optional
 from .product import ATTRIBUTE_FIELDS, TEXT_FIELDS, Product
 
 
+from starter.understanding.query_parser import COLORS, MATERIALS, USE_CASES
+
 DETAIL_ATTRIBUTE_KEYS = {
     "brand": "brand",
     "brand name": "brand",
@@ -33,23 +35,8 @@ DETAIL_ATTRIBUTE_KEYS = {
     "special feature": "feature",
 }
 
-COLOR_ALIASES = (
-    ("black", "black"), ("white", "white"), ("red", "red"),
-    ("blue", "blue"), ("green", "green"), ("yellow", "yellow"),
-    ("orange", "orange"), ("purple", "purple"), ("pink", "pink"),
-    ("brown", "brown"), ("beige", "beige"), ("grey", "gray"),
-    ("gray", "gray"), ("navy", "navy"), ("gold", "gold"),
-    ("silver", "silver"),
-)
-MATERIAL_ALIASES = (
-    ("stainless steel", "stainless steel"), ("cotton", "cotton"),
-    ("polyester", "polyester"), ("nylon", "nylon"),
-    ("spandex", "spandex"), ("leather", "leather"), ("wool", "wool"),
-    ("silk", "silk"), ("rayon", "rayon"), ("rubber", "rubber"),
-    ("suede", "suede"), ("denim", "denim"), ("linen", "linen"),
-    ("fleece", "fleece"), ("mesh", "mesh"), ("acrylic", "acrylic"),
-    ("alloy", "alloy"),
-)
+COLOR_ALIASES = tuple((c, "gray" if c == "grey" else c) for c in COLORS)
+MATERIAL_ALIASES = tuple((m, m) for m in MATERIALS)
 FEATURE_ALIASES = (
     ("waterproof", "waterproof"), ("water resistant", "water resistant"),
     ("breathable", "breathable"), ("lightweight", "lightweight"),
@@ -59,10 +46,7 @@ FEATURE_ALIASES = (
     ("moisture wicking", "moisture wicking"), ("stretchy", "stretch"),
     ("stretch", "stretch"),
 )
-USE_CASE_ALIASES = tuple((value, value) for value in (
-    "running", "hiking", "workout", "gym", "yoga", "walking", "travel",
-    "outdoor", "casual", "formal", "wedding", "sports",
-))
+USE_CASE_ALIASES = tuple((u, u) for u in USE_CASES)
 
 
 def value_to_text(value: object) -> str:
