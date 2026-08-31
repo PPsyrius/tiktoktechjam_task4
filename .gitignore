@@ -23,3 +23,4 @@ tests/test_organizer_pipeline.py
 artifacts/models/
 artifacts/retrieval/
 results/
+dist/

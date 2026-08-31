@@ -1,249 +1,198 @@
 # TechJam Shopping Copilot
 
-Main branch with integrated retrieval, memory, and reranking updates.
+An offline conversational product-search agent for the TechJam Shopping Copilot challenge. The system turns multi-turn customer language into structured state, routes each request through lexical, structured, and selectively activated semantic retrieval, then returns a constraint-aware Top 10.
 
-Current branch: `main`
+## Why this project
 
-Last updated: `2026-08-31`
+Keyword-only shopping search breaks when a customer starts vaguely, adds constraints over several turns, or changes direction. This agent is designed around those transitions:
 
-## Part 1 catalog data layer
+- **Buying:** prioritize explicit categories and hard constraints.
+- **Browsing:** preserve diversity and defer semantic candidates for later turns.
+- **Intent override:** replace obsolete preferences without carrying stale ranking scores.
+- **Boundary/no preference:** keep unknown catalog facts eligible and avoid inventing constraints.
 
-The canonical catalog pipeline now lives in `starter/catalog/`:
-
-```text
-catalog.jsonl -> CatalogLoader -> FeatureExtractor -> Product
-              -> CatalogCache -> ProductStore -> Retrieval / Rerank
-```
-
-Both formal retrieval implementations consume `ProductStore`; neither owns a
-separate JSON parser. Run the real-catalog profiler and build the reusable
-catalog/FTS5 caches with:
-
-```bash
-python3 -m scripts.profile_catalog --catalog data/catalog.jsonl
-python3 -m retrieval.build_index --catalog data/catalog.jsonl --cache-dir .cache/retrieval
-```
-
-The Product schema, measured field coverage, normalization rules, and cache
-contract are documented in [`docs/catalog_data.md`](docs/catalog_data.md).
-
-## Goal
-
-This branch contains the current integrated shopping agent pipeline.
-Given a `SearchContext` from the memory/state module and a `Candidate Pool`
-from the retrieval module, the agent produces final Top 10 recommendations in
-a stable, constraint-aware order.
-
-High-level pipeline:
+## Architecture
 
 ```text
-Catalog -> ParsedUpdate -> SearchContext -> Candidate Pool -> Ranked Top 10
+customer message
+      |
+      v
+intent + requirement parser ---> session Memory / SearchContext
+                                      |
+                   +------------------+------------------+
+                   |                  |                  |
+                   v                  v                  v
+               BM25/FTS5       structured postings   MiniLM dense
+                   +------------------+------------------+
+                                      |
+                         gated candidate admission
+                                      |
+                  constraint scoring + source-score fusion
+                                      |
+                         ordered Top 10 + next question
 ```
 
-The reranking stack owns the final step:
+The semantic route uses only observable runtime signals. It activates on preference overrides, insufficient lexical fill, or first-turn lexical/semantic agreement; semantic candidates are capped at 40 and use ranking weight `0.3`.
+
+## Verified result
+
+Public set: 200 sessions and the frozen 50,000-product catalog.
+
+| Metric | Result |
+|---|---:|
+| HitRate@10 | **0.955** |
+| MRR | **0.638062** |
+| MTTC | **2.74** |
+| Efficiency | **0.826** |
+| TechnicalScore | **0.834119** |
+
+| Scenario | HitRate@10 | MRR | MTTC |
+|---|---:|---:|---:|
+| Boundary | 1.0000 | 0.756667 | 3.80 |
+| Browsing | 0.9625 | 0.599588 | 2.675 |
+| Buying | 0.9375 | 0.595774 | 2.25 |
+| Intent Override | 0.966667 | 0.813889 | 3.866667 |
+
+These are public-development results, not a claim about the organizer's disjoint 800-session private set.
+
+## Setup
+
+Tested with Python `3.12.11`. Python 3.10+ is supported by the source and CI.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+gzip -dc ParticipationKit/catalog.jsonl.gz > data/catalog.jsonl
+```
+
+For the exact tested dependency set, use `requirements-lock.txt` instead of `requirements.txt`.
+
+### Prepare semantic assets in a development clone
+
+The public source repository does not require large binary files in Git history. This command downloads the pinned model revision, rebuilds the catalog-bound index, and runs the public evaluation:
+
+```bash
+python -m scripts.run_best_semantic --download-model
+```
+
+The final offline submission archive contains the already prepared model and index, so official inference does not require network access.
+
+## Official evaluation command
+
+Once `artifacts/models/all-MiniLM-L6-v2` and `artifacts/retrieval/all-MiniLM-L6-v2.npz` are present, the unmodified official harness automatically loads the verified semantic configuration:
+
+```bash
+python -m evaluator.local_evaluator
+```
+
+Expected summary:
 
 ```text
-SearchContext + Candidate Pool -> Candidate Fusion -> Constraint Scoring -> Final Reranking -> Top 10
+HitRate@10=0.955  MRR=0.638062  MTTC=2.74  TechnicalScore=0.834119
 ```
 
-## Repository Layout
+Set `TECHJAM_DISABLE_SEMANTIC=1` to exercise the deterministic lexical/structured fallback. Optional path overrides are `TECHJAM_SEMANTIC_MODEL_DIR` and `TECHJAM_SEMANTIC_INDEX`.
 
-Core competition files:
-
-- `starter/agent.py`: official editable agent entrypoint used by the evaluator
-- `evaluator/local_evaluator.py`: local public-set evaluator
-- `docs/agent_api_contract.json`: required request/response contract
-- `data/public_set.jsonl`: 200 public development sessions
-- `data/catalog.jsonl`: local catalog file, required for evaluation and ignored by Git
-
-Core reranking files:
-
-- `starter/score_normalizer.py`: normalizes source scores into comparable floats
-- `starter/candidate_fusion.py`: deduplicates candidates and merges source scores/ranks
-- `starter/constraint_scorer.py`: scores hard constraints against candidate product text
-- `starter/reranker.py`: produces the final ranked output structure
-
-## Current Implementation Status
-
-Implemented:
-
-- hybrid retrieval is wired into `starter/agent.py`
-- canonical immutable Product and read-only ProductStore
-- deterministic profiling, normalization, attribute extraction, and search text
-- content-addressed catalog and FTS5 caches with explicit corruption failures
-- Memory state to SearchContext integration
-- lexical and structured candidate retrieval
-- selective MiniLM semantic retrieval with lexical-confidence gating
-- candidate deduplication and source-score merging are working
-- snippet evidence is connected to retrieval and reranking
-- same-task override handling is stabilized
-- cross-turn candidate history is preserved within a task
-- hard constraints, soft preferences, and typed exclusions are scored separately
-- price constraints are scored structurally instead of only through text matching
-- final ranking returns deterministic order by `final_score` then `parent_asin`
-- clarification prompts are driven by memory state and override handling
-- regression tests cover retrieval, understanding, memory, exclusions, and override behavior
-- official 200-session evaluator and unit tests run end to end
-
-Not integrated yet:
-
-- there is no shared `SearchContext` or `Candidate Pool` contract file yet
-- rating / review-count features are not implemented yet
-- clarification still follows the memory module's attribute order rather than
-  reranker uncertainty
-
-## Local Setup
-
-Prepare the catalog once:
+## Build the offline submission
 
 ```bash
-shasum -a 256 ParticipationKit/catalog.jsonl.gz
-cat ParticipationKit/SHA256SUMS
-gzip -dk ParticipationKit/catalog.jsonl.gz
-mv ParticipationKit/catalog.jsonl data/catalog.jsonl
+python -m scripts.build_submission
 ```
 
-Run the non-semantic evaluator:
+This produces `dist/techjam-shopping-copilot-offline.zip` containing:
+
+- root `agent.py` exporting `Agent`;
+- all required local helper modules;
+- the frozen public catalog and evaluator for reproduction;
+- the pinned Apache-2.0 MiniLM model and catalog-matched dense index;
+- a machine-readable manifest with checksums and expected metrics.
+
+The builder refuses to package a model or index whose fingerprint does not match the catalog.
+
+## Demo
+
+Run a human-readable multi-turn example:
 
 ```bash
-python3 -m evaluator.local_evaluator
+python -m scripts.demo_session
 ```
 
-The verified best configuration uses the pinned `all-MiniLM-L6-v2` model,
-semantic weight `0.3`, at most 40 semantic candidates, and dynamic semantic
-gating. From a fresh clone, install dependencies and run:
+The recording plan and shot list are in [`docs/DEMO_VIDEO_SCRIPT.md`](docs/DEMO_VIDEO_SCRIPT.md). Devpost-ready copy is in [`docs/DEVPOST_SUBMISSION.md`](docs/DEVPOST_SUBMISSION.md).
 
-```bash
-python3 -m pip install -r requirements.txt
-python3 -m scripts.run_best_semantic --download-model
-```
+## Required interface
 
-The command downloads the pinned model revision when necessary, rebuilds the
-catalog and semantic indexes, runs all 200 public sessions, and rejects a stale
-or incompatible semantic asset instead of reporting a fallback result as valid.
-On a machine that already has the model and a current index, use:
-
-```bash
-python3 -m scripts.run_best_semantic --reuse-index
-```
-
-Verified semantic metrics on commit `c92d632`:
-
-- `HitRate@10 = 0.955`
-- `MRR = 0.638062`
-- `MTTC = 2.74`
-- `recommended_technical_score = 0.834119`
-
-These are full local public-set evaluator results for the current branch, not the
-original starter baseline in `docs/baseline_results.json`. The model, generated
-index, caches, and result files remain local and are intentionally ignored by Git.
-
-## Section 5 API Shape
-
-Current internal reranker entrypoint:
+The submission exports `agent.Agent` and implements:
 
 ```python
-from starter.reranker import rank_candidates
-
-search_context = {
-    "hard_constraints": ["cotton", "black"],
-}
-
-candidate_pool = [
-    {
-        "parent_asin": "A1",
-        "title": "Black cotton running shirt",
-        "source_scores": {"bm25": 3.2, "semantic": 0.8},
-    }
-]
-
-result = rank_candidates(search_context, candidate_pool, top_k=10)
+agent.reset(session_id, user_profile)
+response = agent.respond(session_id, user_message, turn, top_k=10)
 ```
 
-Current expected inputs:
+Each response contains a message, an allowed `ask_attribute`, ordered unique `parent_asin` recommendations, and non-negative token usage. The agent never reads ground truth or private scenario labels and never mutates the catalog.
 
-- `search_context`
-  - `hard_constraints`: dict-shaped constraints such as `color`, `brand`,
-    `price_min`, `price_max`, `rating_min`, with list/string fallback support
-  - `soft_preferences`: optional dict of preference slots
-  - `excluded`: optional dict of typed exclusions
-  - `intent`: `buying`, `browsing`, or `unknown`
-- `candidate_pool`
-  - `parent_asin`
-  - product text fields such as `title`, `categories`, `features`, `details`, `description`, `store`
-  - optional structured `attributes`
-  - optional numeric `price`
-  - optional `source_scores`
-  - optional `source_ranks`
+## Tools, APIs, libraries, and assets
 
-Current output:
+- **Development tools:** Python CLI, PyCharm, Git/GitHub, GitHub Actions.
+- **Runtime APIs:** no external API is required by the verified submission. An optional DeepSeek parser exists for experiments but is disabled in the verified offline configuration.
+- **Libraries:** Sentence Transformers, Hugging Face Transformers, PyTorch, NumPy, scikit-learn, and SQLite FTS5.
+- **Dataset:** organizer-provided frozen Amazon Reviews 2023 `Clothing_Shoes_and_Jewelry` catalog and 200 public sessions.
+- **Model:** `sentence-transformers/all-MiniLM-L6-v2`, revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, Apache-2.0.
+- **Generated asset:** 50,000-product normalized dense index, fingerprinted against both catalog and model.
 
-- `RankingResult.items`: list of `RankedItem`
-- `RankedItem.parent_asin`
-- `RankedItem.final_score`
-- `RankedItem.reason_codes`
-- `RankedItem.matched_preferences`
-- `RankedItem.hard_failures`
-- `RankingResult.clarification_slot`: currently `None`
+See [`DATA_ATTRIBUTION.md`](DATA_ATTRIBUTION.md) for dataset attribution.
 
-## Quick Validation
+## Cost and feasibility disclosure
 
-Syntax check:
+- External API calls in the verified configuration: **0**.
+- Prompt/completion tokens: **0 / 0**.
+- Estimated model/API cost: **$0**.
+- Network required during official inference: **No**.
+- Local model size: approximately **87 MB**.
+- Dense index size: approximately **71.6 MB**.
+- Warm initialization observed locally: approximately **13 seconds**.
+- Full index rebuild observed locally: approximately **415 seconds**; this is performed before submission, not during inference.
+- Benchmark-process peak RSS observed locally: approximately **1.1 GB**, including catalog, simulator, model, and index.
+- First-turn retrieval P95 observed locally: approximately **39 ms** after initialization.
+
+Times are measurements from a macOS ARM64 development machine, not deployment guarantees.
+
+## Tests
 
 ```bash
-python3 -m py_compile \
-  starter/score_normalizer.py \
-  starter/candidate_fusion.py \
-  starter/constraint_scorer.py \
-  starter/reranker.py
+python -m unittest discover -s tests
 ```
 
-Smoke test:
+The suite covers catalog normalization, intent parsing, memory transitions, overrides, route fusion, semantic asset validation, ranking, API behavior, and end-to-end session flow.
 
-```bash
-python3 - <<'PY'
-from starter.reranker import rank_candidates
+## Limitations and next improvements
 
-search_context = {
-    "hard_constraints": ["cotton", "black"],
-}
+- The aggregate `user_profile` is accepted but not yet used for ranking; safe low-weight personalization is future work.
+- Clarification follows state-aware attribute ordering rather than explicit information-gain estimation over the candidate pool.
+- Exact dense scoring over 50,000 vectors is intentionally simple and reproducible but uses more memory than an approximate index.
+- Rating and review-count quality signals are not yet included in final ranking.
+- The semantic gate and weights were selected on the 200 public sessions and may not transfer perfectly to the disjoint private set.
+- The current English parser assumes the challenge's pre-cleaned text and does not address spelling or ASR errors, as allowed by the task scope.
 
-candidate_pool = [
-    {
-        "parent_asin": "A1",
-        "title": "Black cotton running shirt",
-        "source_scores": {"bm25": 3.2, "semantic": 0.8},
-    },
-    {
-        "parent_asin": "A2",
-        "title": "Red polyester jacket",
-        "source_scores": {"bm25": 4.0},
-    },
-]
+## Team contributions
 
-print(rank_candidates(search_context, candidate_pool, top_k=10))
-PY
+- **Panpakorn Siripanich / PPsyrius:** repository integration, participant-kit setup, CI, linting, compatibility fixes, and end-to-end test infrastructure.
+- **Jia Huang / jiahuang-ui:** session memory/state contracts, local hybrid-parser work, canonical catalog data layer, normalization, and catalog caching.
+- **Mrigakshi Roy Choudhury:** user-requirement understanding, constraint parsing, query rewriting, follow-up/override interpretation, and parsing/ranking integration.
+- **LiiiKiii:** candidate fusion, constraint scoring, deterministic reranking, snippet evidence integration, and ranking documentation.
+- **Nico:** multi-route retrieval, BM25/structured/semantic integration, selective semantic gating, override/candidate-admission stabilization, evaluation diagnostics, and reproducible offline packaging.
+
+## Repository layout
+
+```text
+agent.py                  official submission export
+starter/                  agent, parser, memory, catalog, ranking
+retrieval/                BM25, structured, semantic, fusion
+evaluator/                organizer-compatible local evaluator
+scripts/                  profiling, evaluation, demo, packaging
+tests/                    unit and integration regression suite
+docs/                     contracts, design notes, submission material
+artifacts/                local model/index (ignored in source Git)
 ```
 
-The expected behavior is that `A1` ranks above `A2` because it matches both
-hard constraints.
-
-Run the focused regression tests for the integrated pipeline:
-
-```bash
-python3 -m unittest tests.test_retrieval tests.test_understanding tests.test_memory
-```
-
-## Recommended Next Steps
-
-1. Agree with Sections 3 and 4 on a stable `SearchContext` and `Candidate Pool` contract.
-2. Add product quality signals such as rating and review count.
-3. Add `clarification_slot` selection when top candidates are difficult to distinguish.
-4. Expand structured attribute coverage and product quality signals.
-5. Compare pool-size and route-ablation effects to separate retrieval gains from reranking gains.
-
-## Notes
-
-- Do not modify `evaluator/local_evaluator.py` for competition scoring.
-- Do not rely on `ground_truth` or `scenario_type` inside runtime agent logic.
-- `data/catalog.jsonl` and `results.json` are ignored by Git and are local-only files.
+Detailed retrieval contracts are documented in [`docs/task4_retrieval.md`](docs/task4_retrieval.md).

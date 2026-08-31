@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from retrieval import Constraint, HybridRetriever, SearchContext
+from retrieval import Constraint, HybridRetriever, RetrievalConfig, SearchContext
 from starter.catalog import ProductStore
 from starter.memory import (
     AttributeStatus,
@@ -55,6 +56,63 @@ PRODUCT_TEXT_FIELDS = ("title", "categories", "features", "details", "store", "d
 ATTRIBUTE_FIELDS = frozenset({
     "category", "brand", "material", "color", "size", "style", "use_case", "feature",
 })
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_SEMANTIC_MODEL_DIR = PROJECT_ROOT / "artifacts/models/all-MiniLM-L6-v2"
+DEFAULT_SEMANTIC_INDEX = PROJECT_ROOT / "artifacts/retrieval/all-MiniLM-L6-v2.npz"
+
+
+def _environment_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _default_retriever(
+    catalog_path: Path,
+    cache_dir: str | Path | None,
+) -> HybridRetriever:
+    store = ProductStore.from_jsonl(
+        catalog_path,
+        cache_dir=Path(cache_dir) / "catalog" if cache_dir is not None else None,
+    )
+    if _environment_flag("TECHJAM_DISABLE_SEMANTIC"):
+        return HybridRetriever(store, cache_dir=cache_dir)
+
+    model_dir = Path(os.environ.get("TECHJAM_SEMANTIC_MODEL_DIR", DEFAULT_SEMANTIC_MODEL_DIR))
+    index_path = Path(os.environ.get("TECHJAM_SEMANTIC_INDEX", DEFAULT_SEMANTIC_INDEX))
+    if not model_dir.is_dir() or not index_path.is_file():
+        return HybridRetriever(store, cache_dir=cache_dir)
+
+    try:
+        from retrieval.semantic_retriever import (
+            LocalSentenceEncoder,
+            SemanticRetriever,
+            read_semantic_metadata,
+        )
+
+        metadata = read_semantic_metadata(index_path)
+        # Small fixture catalogs and a stale production asset should remain on
+        # the deterministic lexical fallback without loading a 90 MB model.
+        if metadata.get("catalog") != store.fingerprint:
+            return HybridRetriever(store, cache_dir=cache_dir)
+        encoder = LocalSentenceEncoder(model_dir)
+        semantic = SemanticRetriever.load(store, encoder, index_path)
+    except Exception as exc:
+        config = RetrievalConfig(enable_semantic=True)
+        return HybridRetriever(
+            store,
+            config,
+            cache_dir,
+            semantic_error=f"{type(exc).__name__}: {exc}",
+        )
+
+    config = RetrievalConfig(
+        enable_semantic=True,
+        semantic_candidate_limit=40,
+        dynamic_semantic_gate=True,
+        semantic_min_lexical_fill=0.75,
+        semantic_shadow_min_lexical_overlap=2,
+        semantic_shadow_lexical_window=160,
+    )
+    return HybridRetriever(store, config, cache_dir, semantic)
 
 
 def _values(value: object) -> list[object]:
@@ -208,24 +266,19 @@ class Agent:
         retriever: HybridRetriever | None = None,
         cache_dir: str | Path | None = None,
         candidate_limit: int = 200,
-        semantic_weight: float = 0.6,
+        semantic_weight: float = 0.3,
         diagnostic_hook: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.catalog_path = Path(catalog_path)
         self.memory = MemoryService()
         resolved_cache = cache_dir if cache_dir is not None else _default_cache_dir()
-        self.retriever = retriever or HybridRetriever(
-            ProductStore.from_jsonl(
-                self.catalog_path,
-                cache_dir=(
-                    Path(resolved_cache) / "catalog"
-                    if resolved_cache is not None
-                    else None
-                ),
-            ),
-            cache_dir=resolved_cache,
+        self.retriever = retriever or _default_retriever(
+            self.catalog_path,
+            resolved_cache,
         )
         self.store = self.retriever.store
+        self.semantic_enabled = "semantic" in self.retriever.routes
+        self.semantic_startup_error = self.retriever.startup_errors.get("semantic")
         self.snippets = SnippetIndex(self.store)
         # Legacy local experiments reuse the BM25 connection for diagnostics.
         self.connection = self.retriever.bm25.connection if self.retriever.bm25 else None

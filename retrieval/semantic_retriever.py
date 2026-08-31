@@ -1,4 +1,4 @@
-"""Optional offline dense search. No downloads or model imports on the default path."""
+"""Offline dense search with catalog/model-fingerprinted local assets."""
 from __future__ import annotations
 
 import hashlib
@@ -17,6 +17,16 @@ def _numpy():
     except ImportError as exc:
         raise RuntimeError("Dense retrieval requires the optional numpy dependency") from exc
     return np
+
+
+def read_semantic_metadata(path):
+    """Read asset identity without loading the encoder or dense matrix."""
+    np = _numpy()
+    with np.load(path, allow_pickle=False) as data:
+        metadata = json.loads(str(data["metadata"]))
+    if not isinstance(metadata, dict):
+        raise ValueError("Dense index metadata must be an object")
+    return metadata
 
 
 class LocalSentenceEncoder:
