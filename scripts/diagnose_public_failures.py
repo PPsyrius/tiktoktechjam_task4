@@ -6,9 +6,9 @@ diagnostic hook and are never passed into Agent retrieval or ranking logic.
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import gzip
 import json
+from collections import Counter
 from pathlib import Path
 
 from evaluator.local_evaluator import evaluate, materialize_hidden_fields

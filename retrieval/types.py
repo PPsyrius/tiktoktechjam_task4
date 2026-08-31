@@ -97,7 +97,7 @@ class RetrievalDiagnostics:
 class CandidatePool:
     candidates: tuple[Candidate, ...]
     diagnostics: RetrievalDiagnostics
-    deferred_candidates: Tuple[str, ...] = ()
+    deferred_candidates: tuple[str, ...] = ()
 
     def __iter__(self):
         return iter(self.candidates)
