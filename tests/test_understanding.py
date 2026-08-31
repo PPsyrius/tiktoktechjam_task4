@@ -10,11 +10,22 @@ from starter.understanding import (
     parse_user_message,
     rewrite_queries,
 )
+from starter.understanding.catalog_vocab import typed_catalog_matches
 from starter.understanding.llm_parser import extract_json_object, parsed_update_from_llm
 from starter.memory.models import Intent, UpdateOperation
 
 
 class QueryParserTest(unittest.TestCase):
+    def _shirts_context(self) -> dict:
+        return {
+            "intent": "buying",
+            "category": "shirts",
+            "product_type": None,
+            "hard_constraints": {"color": ["white"]},
+            "soft_preferences": {"material": ["cotton"]},
+            "excluded": {},
+        }
+
     def test_buying_message_updates_category_and_hard_constraint(self) -> None:
         parsed = parse_user_message(
             "s001",
@@ -200,6 +211,102 @@ class QueryParserTest(unittest.TestCase):
         self.assertLessEqual(len(rewrites), 8)
         self.assertFalse(any("ground_truth" in item for item in rewrites))
 
+    def test_same_task_override_with_context_does_not_reset(self) -> None:
+        parsed = parse_user_message(
+            "s001",
+            "Actually, ignore my earlier preference. What I need is: black.",
+            3,
+            search_context=self._shirts_context(),
+        )
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertFalse(parsed.reset_task)
+        self.assertEqual(parsed.intent.value, "buying")
+        slots = {update.slot: update.value for update in parsed.updates}
+        self.assertEqual(slots["color"], "black")
+        self.assertNotIn("category", slots)
+
+    def test_new_category_override_with_context_resets_task(self) -> None:
+        parsed = parse_user_message(
+            "s001",
+            "Actually, ignore my earlier preference. I'm looking for jackets. "
+            "A key requirement is: polyester.",
+            2,
+            search_context=self._shirts_context(),
+        )
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertTrue(parsed.reset_task)
+        slots = {update.slot: update.value for update in parsed.updates}
+        self.assertEqual(slots["category"], "jackets")
+        self.assertEqual(slots["material"], "polyester")
+
+    def test_not_that_color_excludes_context_value(self) -> None:
+        parsed = parse_user_message(
+            "s001",
+            "Not that color, I want navy instead.",
+            2,
+            search_context=self._shirts_context(),
+        )
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertFalse(parsed.reset_task)
+        ops = {(update.slot, update.op.value, update.value) for update in parsed.updates}
+        self.assertIn(("color", "exclude", "white"), ops)
+        self.assertIn(("color", "set", "navy"), ops)
+        self.assertFalse(any(update.slot == "category" for update in parsed.updates))
+
+    def test_maps_catalog_tokens_including_parser_only_vocab(self) -> None:
+        parsed = parse_user_message(
+            "s001",
+            "I need denim jackets, brand: Nike. They must be waterproof and breathable.",
+            1,
+        )
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        ops = {(update.slot, update.op.value, str(update.value).lower()) for update in parsed.updates}
+        self.assertIn(("material", "set", "denim"), ops)
+        self.assertIn(("brand", "set", "nike"), ops)
+        self.assertTrue(
+            ("feature", "add", "waterproof") in ops
+            or any("waterproof" in value for _, _, value in ops)
+        )
+        self.assertEqual(parsed.intent, Intent.BUYING)
+
+    def test_looking_without_hard_requirement_writes_browsing(self) -> None:
+        parsed = parse_user_message("s001", "I'm looking for running shoes.", 1)
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed.intent, Intent.BROWSING)
+        self.assertEqual(parsed.updates[0].value, "running shoes")
+        intent, confidence = classify_intent("I'm looking for running shoes.", parsed)
+        self.assertEqual(intent, Intent.BROWSING)
+        self.assertGreaterEqual(confidence, 0.7)
+
+    def test_query_rewrites_drop_replaced_context_tokens(self) -> None:
+        parsed = parse_user_message(
+            "s001",
+            "Actually, ignore my earlier preference. What I need is: black.",
+            3,
+            search_context=self._shirts_context(),
+        )
+        rewrites = rewrite_queries(
+            "Actually, ignore my earlier preference. What I need is: black.",
+            parsed,
+            self._shirts_context(),
+        )
+        joined = " ".join(rewrites).lower()
+        self.assertIn("shirts", joined)
+        self.assertIn("black", joined)
+        self.assertNotIn("white", joined)
+
+    def test_catalog_vocab_maps_denim_and_waterproof(self) -> None:
+        matches = dict(typed_catalog_matches("waterproof denim nike running"))
+        self.assertEqual(matches["material"], "denim")
+        self.assertEqual(matches["brand"], "nike")
+        self.assertEqual(matches["use_case"], "running")
+        self.assertEqual(matches["feature"], "waterproof")
+
 
 class LlmParserHelpersTest(unittest.TestCase):
     def test_extract_json_object_from_fenced_text(self) -> None:
@@ -245,6 +352,27 @@ class LlmParserFallbackTest(unittest.TestCase):
         self.assertTrue(result.query_rewrites)
         self.assertIn("task", result.constraint_kinds)
         self.assertIn("soft", result.constraint_kinds)
+
+    def test_rules_parser_receives_search_context(self) -> None:
+        context = {
+            "intent": "buying",
+            "category": "shirts",
+            "hard_constraints": {"color": ["white"]},
+            "soft_preferences": {},
+            "excluded": {},
+        }
+        with patch("starter.understanding.llm_parser.deepseek_enabled", return_value=False):
+            result = parse_requirement(
+                "s001",
+                "Actually, ignore my earlier preference. What I need is: black.",
+                3,
+                search_context=context,
+            )
+        self.assertEqual(result.source, "rules")
+        assert result.parsed is not None
+        self.assertFalse(result.parsed.reset_task)
+        self.assertEqual(result.parsed.intent.value, "buying")
+        self.assertGreaterEqual(result.intent_confidence, 0.9)
 
     def test_inferred_intent_is_reported_but_not_written_into_update(self) -> None:
         with patch("starter.understanding.llm_parser.deepseek_enabled", return_value=False):

@@ -3,7 +3,7 @@
 Convert the current customer message into a structured `ParseUpdate` for Assignment 3 (Memory). This package does not search the catalog or produce the Top 10 ranking.
 
 ```text
-user message → parse_requirement() → ParseUpdate → Memory.apply_update() → SearchContext
+user message + SearchContext summary → parse_requirement() → ParseUpdate → Memory.apply_update() → SearchContext
 ```
 
 `starter/agent.py` calls this module, then Memory. Understanding never writes session state. Memory never parses natural language.
@@ -15,6 +15,7 @@ user message → parse_requirement() → ParseUpdate → Memory.apply_update() �
 ```text
 starter/understanding/
   __init__.py
+  catalog_vocab.py   catalog-aligned tokens for field mapping
   query_parser.py    rule-based parser (offline fallback)
   query_rewriter.py  retrieval query construction
   llm_parser.py      optional LLM parser
@@ -25,8 +26,9 @@ Tests: `tests/test_understanding.py`.
 
 | File | Responsibility |
 | --- | --- |
-| `query_parser.py` | `parse_user_message(...)`, `classify_intent(...)`, `constraint_kind(...)` — intent, hard/soft/negative slots, override, decline, exclude |
-| `llm_parser.py` | `parse_requirement(...)` — rules always run; optional DeepSeek may add slots; rule `feature` snippets are never dropped |
+| `query_parser.py` | `parse_user_message(...)`, `classify_intent(...)`, `constraint_kind(...)` — intent, hard/soft/negative slots, override vs same-task replace, decline, exclude; uses SearchContext when provided |
+| `catalog_vocab.py` | Shared color/material/use-case lists plus parser-only brands, styles, and feature tokens |
+| `llm_parser.py` | `parse_requirement(...)` — rules always run (with SearchContext); optional DeepSeek may add slots; rule `feature` snippets are never dropped |
 | `query_rewriter.py` | `rewrite_queries(...)` — retrieval-oriented strings from this turn and SearchContext |
 | `__init__.py` | Public API: `parse_requirement`, `parse_user_message`, `classify_intent`, `constraint_kind`, `rewrite_queries`, `ParseResult` |
 
@@ -61,9 +63,9 @@ Ops: `set`, `add`, `remove`, `clear`, `decline`, `exclude`.
 
 Do not include `ground_truth`, `scenario_type`, or other evaluation labels.
 
-Assignment 2 describes **this turn**. Assignment 3 merges turns into the session `SearchContext` (`get_retrieval_state`). Later turns send only new operations; Memory keeps prior constraints unless `reset_task` is set.
+Assignment 2 describes **this turn**. The rules parser also reads a summary of the current SearchContext so follow-ups such as "not that color" or same-task replacements can target an existing slot. Assignment 3 merges turns into the session `SearchContext` (`get_retrieval_state`). Later turns send only new operations; Memory keeps prior constraints unless `reset_task` is set.
 
-When `reset_task` is true, Memory clears the shopping task. The Agent may re-attach `category` before `apply_update` so the product type is not dropped on override.
+When `reset_task` is true, Memory clears the shopping task. With an active SearchContext, the parser sets `reset_task` only when the user names a **new category**. Same-task phrases such as "ignore my earlier preference" plus a new color or material emit a replacement, not a full reset. Without SearchContext, override phrases still default to `reset_task` so standalone tests stay conservative. The Agent may also re-scope a reset before `apply_update`.
 
 Constraint strings are cleaned to **180 characters** (the same cap the local evaluator uses for intent-card snippets). Values that classify as a short token (`cotton`, `black`) still emit that slot. If the raw phrase is longer, the parser also `add`s the full snippet on `feature` so later retrieval can exact-match catalog text.
 
@@ -152,10 +154,10 @@ Use Python 3.10+. `tests.test_memory` covers Assignment 3. `tests.test_understan
 - `clear`: remove / clear of a previous slot
 - `task`: category / product type
 
-`classify_intent(message, parsed)` returns `(Intent, confidence)`. Confidence is on `ParseResult`; Memory still receives only `intent` so an unclear turn does not overwrite the session with `unknown`.
+`classify_intent(message, parsed)` returns `(Intent, confidence)`. Confidence is on `ParseResult`. Memory still receives `intent` only when this turn is confident enough to write it, so an unclear turn does not overwrite the session with `unknown`. Looking-without-a-hard-requirement writes `browsing`. A high confidence score on an override+decline turn is reported but not written into `ParseUpdate`.
 
-`rewrite_queries(message, parsed, search_context)` builds at most eight retrieval strings (category, category+tokens, catalog feature lines, cleaned message). The Agent prepends these to `SearchContext.queries`.
+`rewrite_queries(message, parsed, search_context)` builds at most eight retrieval strings (category, category+tokens, catalog feature lines, cleaned message). Tokens from slots this turn replaced are not reused from SearchContext. The Agent prepends these to `SearchContext.queries`.
 
 Live DeepSeek calls are not part of CI (mocks only).
 
-Catalog ProductStore (Assignment 1), hybrid/semantic retrieval (Assignment 4), and fusion/reranking (Assignment 5) are out of scope for this package.
+Catalog ProductStore loading (Assignment 1), hybrid/semantic retrieval (Assignment 4), and fusion/reranking (Assignment 5) are out of scope for this package. Field mapping uses `catalog_vocab.py`, aligned with Assignment 1 token lists.

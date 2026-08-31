@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from starter.memory.models import (
     CONSTRAINT_SLOTS,
@@ -8,8 +9,17 @@ from starter.memory.models import (
     PREFERENCE_SLOTS,
     Intent,
     ParseUpdate,
+    RetrievalState,
     StateUpdate,
     UpdateOperation,
+)
+from starter.understanding.catalog_vocab import (
+    COLORS,
+    MATERIALS,
+    SIZES,
+    USE_CASES,
+    typed_catalog_matches,
+    word_text,
 )
 
 
@@ -17,23 +27,6 @@ HARD_SLOTS = frozenset({
     "brand", "color", "size", "price_min", "price_max", "rating_min",
 })
 SOFT_SLOTS = frozenset({"material", "style", "feature", "use_case"})
-MATERIALS = (
-    "cotton", "polyester", "nylon", "leather", "wool", "spandex",
-    "silk", "rayon", "fabric",
-)
-COLORS = (
-    "black", "white", "blue", "red", "pink", "green", "brown",
-    "gray", "grey", "purple", "yellow", "orange", "navy", "beige",
-    "silver", "gold",
-)
-SIZES = (
-    "xxs", "xs", "xl", "xxl", "xxxl", "one size",
-    "wide", "narrow", "plus size",
-)
-USE_CASES = (
-    "hiking", "running", "gym", "winter", "outdoor", "work",
-    "wedding", "walking", "travel",
-)
 LOOKING_FOR_RE = re.compile(
     r"(?:i(?:'m| am) looking for|i(?:'m| am) after)\s+(.+?)(?:\.|, but\b| but i\b|$)",
     re.IGNORECASE | re.DOTALL,
@@ -84,6 +77,16 @@ NEGATION_PREFIX_RE = re.compile(
     r"^\s*(?:not|no|without|except|avoid|exclude)\s+(?!more\s+than|longer|preference)",
     re.IGNORECASE,
 )
+THAT_SLOT_RE = re.compile(
+    r"\b(?:not|ignore|forget(?: about)?|drop|never mind)\s+"
+    r"(?:that|the|my)(?:\s+earlier)?\s+"
+    r"(color|material|brand|size|style|feature|budget|price|use case|use_case)\b",
+    re.IGNORECASE,
+)
+INSTEAD_RE = re.compile(
+    r"\b(?:instead(?: of [^.,;]+)?|rather than [^.,;]+|switch to)\s*[:,-]?\s*(.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
 BUDGET_RE = re.compile(r"\$\s*(\d+(?:\.\d+)?)")
 PRICE_MAX_RE = re.compile(
     r"\b(?:under|below|less\s+than|up\s+to|at\s+most|no\s+more\s+than|"
@@ -94,9 +97,14 @@ PRICE_MIN_RE = re.compile(
     r"\b(?:over|above|(?<!no\s)more\s+than|at\s+least)\s*(?:\$)?(\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
+RATING_RE = re.compile(
+    r"(?:at\s+least\s+)?(\d(?:\.\d)?)\s*(?:\+\s*)?(?:stars?|rating)\b|"
+    r"\b(?:rating|rated)\s*(?:at\s+least|over|above|>=)?\s*(\d(?:\.\d)?)",
+    re.IGNORECASE,
+)
 COLOR_LABEL_RE = re.compile(r"\bcolor\s*:\s*([a-z]+)", re.IGNORECASE)
 BRAND_LABEL_RE = re.compile(
-    r"\b(?:brand|manufacturer)\s*:\s*([A-Za-z0-9][\w.&'’ -]{0,32})",
+    r"\b(?:brand|manufacturer)\s*:\s*([A-Za-z0-9][\w&'’-]{0,32})",
     re.IGNORECASE,
 )
 BRAND_SUFFIX_RE = re.compile(r"\b([A-Za-z0-9][\w.&'’-]{1,24})\s+brand\b", re.IGNORECASE)
@@ -128,6 +136,7 @@ DECLINE_SLOT = {
     "use_case": "use_case",
     "use case": "use_case",
 }
+INTENT_WRITE_THRESHOLD = 0.60
 
 
 def _clean(value: str, limit: int = 180) -> str:
@@ -137,6 +146,12 @@ def _clean(value: str, limit: int = 180) -> str:
 def _number(raw: str) -> int | float:
     number = float(raw)
     return int(number) if number.is_integer() else number
+
+
+def _same_value(left: object, right: object) -> bool:
+    if left is None or right is None:
+        return left is right
+    return " ".join(str(left).split()).casefold() == " ".join(str(right).split()).casefold()
 
 
 def constraint_kind(slot: str, op: UpdateOperation | str) -> str:
@@ -177,14 +192,59 @@ def classify_intent(
     if not text:
         return Intent.UNKNOWN, 0.0
     browsing = bool(BROWSING_RE.search(text))
-    buying = bool(BUYING_RE.search(text) or OVERRIDE_RE.search(text))
+    buying = bool(BUYING_RE.search(text))
     if browsing and not buying:
         return Intent.BROWSING, 0.92
     if buying:
-        return Intent.BUYING, 0.90 if OVERRIDE_RE.search(text) else 0.95
+        return Intent.BUYING, 0.95
+    if OVERRIDE_RE.search(text):
+        return Intent.BUYING, 0.90
     if LOOKING_FOR_RE.search(text) or CATEGORY_CUE_RE.search(text):
-        return Intent.UNKNOWN, 0.45
+        return Intent.BROWSING, 0.70
     return Intent.UNKNOWN, 0.30
+
+
+def _context_payload(
+    search_context: RetrievalState | dict[str, Any] | None,
+) -> dict[str, Any]:
+    if search_context is None:
+        return {}
+    if isinstance(search_context, RetrievalState):
+        return search_context.to_dict()
+    return dict(search_context)
+
+
+def _flatten_values(value: object) -> list[object]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [item for item in value if item not in (None, "")]
+    return [value]
+
+
+def _slot_values(payload: dict[str, Any], slot: str) -> list[object]:
+    values: list[object] = []
+    for key in ("hard_constraints", "soft_preferences", "excluded"):
+        mapping = payload.get(key)
+        if isinstance(mapping, dict) and slot in mapping:
+            values.extend(_flatten_values(mapping[slot]))
+    if slot in {"category", "product_type"}:
+        raw = payload.get(slot)
+        if isinstance(raw, str) and raw.strip():
+            values.append(raw.strip())
+    return values
+
+
+def _has_active_task(payload: dict[str, Any]) -> bool:
+    if isinstance(payload.get("category"), str) and payload["category"].strip():
+        return True
+    if isinstance(payload.get("product_type"), str) and payload["product_type"].strip():
+        return True
+    for key in ("hard_constraints", "soft_preferences"):
+        mapping = payload.get(key)
+        if isinstance(mapping, dict) and mapping:
+            return True
+    return False
 
 
 def _classify(text: str) -> tuple[str, str | float] | None:
@@ -224,17 +284,17 @@ def _classify(text: str) -> tuple[str, str | float] | None:
     if budget and ("budget" in lowered or "$" in cleaned):
         return "price_max", _number(budget.group(1))
 
-    for material in MATERIALS:
-        if re.search(rf"\b{material}\b", lowered):
-            return "material", material
+    rating = RATING_RE.search(lowered)
+    if rating:
+        raw = rating.group(1) or rating.group(2)
+        if raw:
+            return "rating_min", _number(raw)
 
-    for color in COLORS:
-        if re.search(rf"\b{color}\b", lowered):
-            return "color", color
-
-    for size in SIZES:
-        if re.search(rf"\b{re.escape(size)}\b", lowered):
-            return "size", size
+    typed = typed_catalog_matches(body)
+    for slot, value in typed:
+        if slot == "feature":
+            continue
+        return slot, value
 
     if any(word in lowered for word in ("size", "sizing", "width")):
         return "size", cleaned
@@ -317,14 +377,16 @@ def _append_constraint(
 
 
 def _typed_tokens(text: str) -> list[tuple[str, str]]:
-    lowered = text.lower()
     found: list[tuple[str, str]] = []
-    for material in MATERIALS:
-        if re.search(rf"\b{material}\b", lowered):
-            found.append(("material", material))
-    for color in COLORS:
-        if re.search(rf"\b{color}\b", lowered):
-            found.append(("color", color))
+    seen: set[tuple[str, str]] = set()
+    for slot, value in typed_catalog_matches(text):
+        if slot in {"price_min", "price_max", "rating_min"}:
+            continue
+        key = (slot, str(value).casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append((slot, value))
     return found
 
 
@@ -386,6 +448,12 @@ def _extract_labeled_slots(message: str, updates: list[StateUpdate]) -> None:
             updates.append(StateUpdate("price_max", UpdateOperation.SET, _number(budget.group(1))))
         if min_price:
             updates.append(StateUpdate("price_min", UpdateOperation.SET, _number(min_price.group(1))))
+    if not any(item.slot == "rating_min" for item in updates):
+        rating = RATING_RE.search(message)
+        if rating:
+            raw = rating.group(1) or rating.group(2)
+            if raw:
+                updates.append(StateUpdate("rating_min", UpdateOperation.SET, _number(raw)))
 
 
 def _extract_negatives(message: str, updates: list[StateUpdate]) -> None:
@@ -400,17 +468,101 @@ def _extract_negatives(message: str, updates: list[StateUpdate]) -> None:
             _append_constraint(updates, match.group(1), keep_short_snippet=False, force_negative=True)
 
 
+def _apply_context_followups(
+    message: str,
+    updates: list[StateUpdate],
+    payload: dict[str, Any],
+) -> None:
+    """Resolve follow-ups that only make sense against the current SearchContext."""
+    if not payload:
+        return
+    for match in THAT_SLOT_RE.finditer(message):
+        raw_slot = match.group(1).lower().replace(" ", "_")
+        slot = "price_max" if raw_slot in {"budget", "price"} else raw_slot
+        if slot not in CONSTRAINT_SLOTS | PREFERENCE_SLOTS:
+            continue
+        current = _slot_values(payload, slot)
+        if current and slot in EXCLUDABLE_SLOTS:
+            for value in current:
+                if isinstance(value, str) and value.strip():
+                    if not _has_update(updates, slot, UpdateOperation.EXCLUDE, value.strip()):
+                        updates.append(StateUpdate(slot, UpdateOperation.EXCLUDE, value.strip()))
+        elif slot in CONSTRAINT_SLOTS | PREFERENCE_SLOTS and not _has_update(
+            updates, slot, UpdateOperation.CLEAR,
+        ):
+            updates.append(StateUpdate(slot, UpdateOperation.CLEAR))
+
+    instead = INSTEAD_RE.search(message)
+    if instead:
+        _append_constraint(updates, instead.group(1), keep_short_snippet=False)
+
+
+_ATTRIBUTE_LEFTOVER_STOPWORDS = {
+    "instead", "please", "one", "ones", "the", "a", "an", "some", "for", "me",
+}
+
+
+def _is_attribute_phrase(text: str, typed: list[tuple[str, str]]) -> bool:
+    """True when the captured phrase is only catalog attributes, not a product type."""
+    if not typed:
+        return False
+    leftover = word_text(text)
+    for _, value in typed:
+        leftover = leftover.replace(word_text(value), " ")
+    leftover_words = [
+        word for word in leftover.split()
+        if word not in _ATTRIBUTE_LEFTOVER_STOPWORDS
+    ]
+    return not leftover_words
+
+
+def _new_category(updates: list[StateUpdate]) -> str | None:
+    for update in updates:
+        if update.slot == "category" and update.op is UpdateOperation.SET:
+            if isinstance(update.value, str) and update.value.strip():
+                return update.value.strip()
+    return None
+
+
+def _should_reset_task(
+    override_phrase: bool,
+    updates: list[StateUpdate],
+    payload: dict[str, Any],
+) -> bool:
+    """Full reset only when the user starts a new shopping task.
+
+    Without an active SearchContext, keep the previous conservative default so
+    standalone unit tests still see reset_task on override phrases.
+    """
+    if not override_phrase:
+        return False
+    if not _has_active_task(payload):
+        return True
+    new_category = _new_category(updates)
+    old_category = payload.get("category")
+    if (
+        isinstance(new_category, str)
+        and isinstance(old_category, str)
+        and old_category.strip()
+        and not _same_value(new_category, old_category)
+    ):
+        return True
+    return False
+
+
 def parse_user_message(
     session_id: str,
     user_message: str,
     turn: int,
+    search_context: RetrievalState | dict[str, Any] | None = None,
 ) -> ParseUpdate | None:
     """Turn a customer utterance into a Memory ParseUpdate."""
     message = user_message.strip()
     if not message:
         return None
 
-    reset_task = bool(OVERRIDE_RE.search(message))
+    payload = _context_payload(search_context)
+    override_phrase = bool(OVERRIDE_RE.search(message))
     intent: Intent | None = None
     updates: list[StateUpdate] = []
 
@@ -420,13 +572,20 @@ def parse_user_message(
     if looking:
         category = _clean(looking.group(1), limit=120)
         if category:
-            updates.append(StateUpdate("category", UpdateOperation.SET, category))
-            for slot, value in _typed_tokens(category):
+            typed = _typed_tokens(category)
+            if not (_has_active_task(payload) and _is_attribute_phrase(category, typed)):
+                updates.append(StateUpdate("category", UpdateOperation.SET, category))
+            for slot, value in typed:
                 if not _has_update(updates, slot):
-                    updates.append(StateUpdate(slot, UpdateOperation.SET, value))
+                    op = (
+                        UpdateOperation.ADD
+                        if slot in {"feature", "use_case"}
+                        else UpdateOperation.SET
+                    )
+                    updates.append(StateUpdate(slot, op, value))
         if BROWSING_RE.search(message):
             intent = Intent.BROWSING
-        elif reset_task or REQUIREMENT_RE.search(message):
+        elif REQUIREMENT_RE.search(message):
             intent = Intent.BUYING
 
     requirement = REQUIREMENT_RE.search(message)
@@ -451,7 +610,7 @@ def parse_user_message(
         _append_constraint(
             updates,
             chunk,
-            keep_short_snippet=reset_task,
+            keep_short_snippet=override_phrase,
             # Amazon catalog features frequently use labels such as
             # "No Closure closure" or "No Fur". Inside an explicit
             # requirement payload these are positive catalog phrases, not
@@ -462,13 +621,16 @@ def parse_user_message(
     for decline in DECLINE_RE.finditer(message):
         _append_decline(updates, decline.group(1))
 
-    if not reset_task:
+    if not override_phrase:
         for match in REMOVE_RE.finditer(message):
             _append_remove(updates, match.group(1))
 
     _extract_labeled_slots(message, updates)
     negative_scan = message if requirement is None else message[:requirement.start(1)]
     _extract_negatives(negative_scan, updates)
+    _apply_context_followups(message, updates, payload)
+
+    reset_task = _should_reset_task(override_phrase, updates, payload)
 
     hard_ops = any(
         constraint_kind(update.slot, update.op) in {"hard", "negative"}
@@ -479,6 +641,15 @@ def parse_user_message(
         intent = Intent.BUYING
     if intent is None and BROWSING_RE.search(message):
         intent = Intent.BROWSING
+    if intent is None and looking is not None:
+        intent = Intent.BROWSING
+
+    if intent is Intent.UNKNOWN:
+        intent = None
+    if intent is Intent.BROWSING and looking is not None and not BROWSING_RE.search(message):
+        _, confidence = classify_intent(message, None)
+        if confidence < INTENT_WRITE_THRESHOLD:
+            intent = None
 
     if intent is None and not updates and not reset_task:
         return None

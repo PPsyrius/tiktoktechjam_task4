@@ -68,8 +68,18 @@ def rewrite_queries(
 
     tokens: list[str] = []
     features: list[str] = []
+    replaced_slots: set[str] = set()
     if parsed is not None:
         for update in parsed.updates:
+            if update.op in {
+                UpdateOperation.EXCLUDE,
+                UpdateOperation.DECLINE,
+                UpdateOperation.CLEAR,
+                UpdateOperation.REMOVE,
+                UpdateOperation.SET,
+                UpdateOperation.ADD,
+            }:
+                replaced_slots.add(update.slot)
             if update.op in {UpdateOperation.EXCLUDE, UpdateOperation.DECLINE, UpdateOperation.CLEAR}:
                 continue
             value = update.value
@@ -81,13 +91,21 @@ def rewrite_queries(
             elif update.slot in {"color", "material", "brand", "size", "style", "use_case"}:
                 tokens.append(text)
 
-    tokens.extend(
-        item for item in (
-            *_values(payload.get("hard_constraints") if isinstance(payload.get("hard_constraints"), dict) else None),
-            *_values(payload.get("soft_preferences") if isinstance(payload.get("soft_preferences"), dict) else None),
-        )
-        if len(item.split()) <= 3
-    )
+    def _context_tokens(mapping: object) -> list[str]:
+        if not isinstance(mapping, dict):
+            return []
+        phrases: list[str] = []
+        for slot, value in mapping.items():
+            if slot in replaced_slots:
+                continue
+            phrases.extend(
+                item for item in _values({slot: value})
+                if len(item.split()) <= 3
+            )
+        return phrases
+
+    tokens.extend(_context_tokens(payload.get("hard_constraints")))
+    tokens.extend(_context_tokens(payload.get("soft_preferences")))
 
     if category:
         queries.append(category)

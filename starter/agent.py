@@ -19,6 +19,7 @@ from starter.reranker import rank_candidates
 from starter.retrieval import search_context_from_state
 from starter.snippet_index import SnippetIndex, flatten_phrases
 from starter.understanding import parse_requirement
+from starter.understanding.query_parser import OVERRIDE_RE
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -342,11 +343,15 @@ class Agent:
         scoped_override = False
         if parsed is not None:
             parser_requested_reset = parsed.reset_task
+            override_phrase = bool(OVERRIDE_RE.search(user_message))
             parsed = _scope_override_update(
                 parsed,
                 self.memory.get_state(session_id),
             )
-            scoped_override = parser_requested_reset and not parsed.reset_task
+            scoped_override = (
+                (parser_requested_reset or override_phrase)
+                and not parsed.reset_task
+            )
             try:
                 self.memory.apply_update(parsed)
             except (TypeError, ValueError):

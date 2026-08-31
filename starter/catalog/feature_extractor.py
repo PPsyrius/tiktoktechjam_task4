@@ -9,7 +9,7 @@ from typing import Any, Iterable, Mapping, Optional
 from .product import ATTRIBUTE_FIELDS, TEXT_FIELDS, Product
 
 
-from starter.understanding.query_parser import COLORS, MATERIALS, USE_CASES
+from starter.understanding.catalog_vocab import COLORS, MATERIALS, USE_CASES
 
 DETAIL_ATTRIBUTE_KEYS = {
     "brand": "brand",

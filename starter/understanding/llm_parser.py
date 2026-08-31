@@ -35,7 +35,7 @@ Schema:
 
 Rules:
 - intent: buying if a hard requirement is stated; browsing if still exploring; unknown if unclear.
-- reset_task: true only if the user replaces an earlier preference (intent override).
+- reset_task: true only if the user starts a new shopping task (new category). Same-task replacements are false.
 - slots: category, product_type, brand, color, size, price_min, price_max, rating_min, material, style, feature, use_case
 - ops: set, add, remove, clear, decline, exclude
 - decline has no value. Use it for "no preference" / "use your judgment".
@@ -237,7 +237,7 @@ def _merge_rule_snippets(parsed: ParseUpdate, fallback: ParseUpdate | None) -> P
             update.slot, update.op
         ) not in existing_slot_ops:
             extra.append(update)
-    reset_task = parsed.reset_task or fallback.reset_task
+    reset_task = fallback.reset_task
     intent = parsed.intent or fallback.intent
     if not extra and reset_task == parsed.reset_task and intent == parsed.intent:
         return parsed
@@ -359,7 +359,12 @@ def parse_requirement(
     search_context: RetrievalState | dict[str, Any] | None = None,
 ) -> ParseResult:
     """Rules always run. Optional DeepSeek may add slots; catalog snippets are kept."""
-    fallback = parse_user_message(session_id, user_message, turn)
+    fallback = parse_user_message(
+        session_id,
+        user_message,
+        turn,
+        search_context=search_context,
+    )
     if not deepseek_enabled():
         return _enrich_parse_result(
             ParseResult(parsed=fallback, source="rules"),
