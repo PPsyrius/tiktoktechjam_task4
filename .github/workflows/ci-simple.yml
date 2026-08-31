@@ -34,7 +34,8 @@ jobs:
         run: |
           # CI uses uv for speed/caching; local pip still works:
           #   pip install -r requirements.txt
+          uv venv
           uv pip install -r requirements.txt
 
       - name: Run tests
-        run: uv run --with pytest pytest tests/ -v
+        run: uv run pytest tests/ -v
