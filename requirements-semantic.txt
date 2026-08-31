@@ -1,4 +1,7 @@
 # Optional only. Default lexical/structured retrieval uses Python's standard library.
 # Use Python 3.10+ for this optional environment; default retrieval supports 3.9+.
-numpy>=1.26,<3
-sentence-transformers>=3,<6
+# Install with: pip install -r requirements.txt -r requirements-semantic.txt
+# Or with uv:   uv pip install -r requirements.txt -r requirements-semantic.txt  OR  uv sync --group tests --group semantic
+numpy>=1.26,<3; python_version < "3.12"
+numpy>=2.5,<3; python_version >= "3.12"
+sentence-transformers>=3,<7
