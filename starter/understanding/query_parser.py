@@ -14,8 +14,6 @@ from starter.memory.models import (
     UpdateOperation,
 )
 from starter.understanding.catalog_vocab import (
-    COLORS,
-    MATERIALS,
     SIZES,
     USE_CASES,
     typed_catalog_matches,

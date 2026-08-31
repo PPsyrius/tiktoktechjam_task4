@@ -4,7 +4,6 @@ from __future__ import annotations
 import copy
 import math
 import re
-from typing import Any, Optional
 from collections.abc import Iterable, Mapping
 
 from .product import ATTRIBUTE_FIELDS, TEXT_FIELDS, Product

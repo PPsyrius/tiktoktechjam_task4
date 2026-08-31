@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from starter.catalog.feature_extractor import (
     normalize_text as normalized,
-    parse_price as _price,
     value_to_text as text,
 )
 from starter.catalog.product import TEXT_FIELDS, Product

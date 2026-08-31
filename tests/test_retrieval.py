@@ -279,19 +279,15 @@ class AgentRetrievalPipelineTest(unittest.TestCase):
         self.assertNotIn("reset-history", self.agent._candidate_history)
 import gzip
 import importlib.util
-import json
-from pathlib import Path
-import tempfile
 import unittest
 
-from retrieval import (Candidate, Constraint, HybridRetriever, ProductStore,
+from retrieval import (Candidate, Constraint, HybridRetriever,
                        RetrievalConfig, SearchContext, SourceHit)
 from retrieval.bm25_retriever import BM25Retriever, terms
 from retrieval.bm25_retriever import BM25CacheError
 from retrieval.merge import interleave
 from retrieval.product_store import constraint_status
 from retrieval.structured_retriever import StructuredRetriever
-from starter.agent import Agent
 
 
 def records():

@@ -6,7 +6,6 @@ import json
 from collections import defaultdict
 from pathlib import Path
 from types import MappingProxyType
-from typing import Optional
 from collections.abc import Iterable, Mapping
 
 from .catalog_loader import CatalogLoader

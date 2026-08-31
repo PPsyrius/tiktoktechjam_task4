@@ -12,7 +12,6 @@ from starter.memory import (
     MemoryService,
     ParseUpdate,
     StateNotFoundError,
-    StateUpdate,
     UpdateOperation,
 )
 from starter.reranker import rank_candidates

@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from starter.catalog import ProductStore
-from starter.catalog.feature_extractor import value_to_text as flatten_text
 from starter.memory.models import RetrievalState
 from starter.snippet_index import flatten_phrases
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 import math
 
 from starter.catalog.product import ATTRIBUTE_FIELDS
