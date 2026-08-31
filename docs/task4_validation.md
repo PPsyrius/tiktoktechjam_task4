@@ -1,5 +1,9 @@
 # Task 4 validation snapshot — 2026-08-28
 
+> Historical pre-integration snapshot. It is retained only as early validation
+> evidence; use `README.md` and `python -m scripts.run_best_semantic` for the
+> current reproducible configuration.
+
 Branch: feature4. Local changes are not committed or pushed.
 
 ## Automated checks
@@ -54,12 +58,5 @@ constraints: both BM25 and structured routes returned 200 pre-admission candidat
 the admitted pool contained 100 unique valid IDs and evidence from both routes,
 with no errors or fallback. This verifies integration, not relevance improvement.
 
-## Remaining empirical work
-
-1. Agree on canonical attributes and adapt task 1/3 objects to the documented API.
-2. Freeze real upstream contexts; compare identical inputs with route ablations.
-3. Select/package a local semantic model; build the real asset and measure recall,
-   runtime, memory and model licensing suitability.
-4. Integrate task 5 and rerun the official multi-turn evaluation.
-
-See task4_retrieval.md for commands and the full interface.
+See `task4_retrieval.md` for the current interface and `README.md` for the verified
+end-to-end command.

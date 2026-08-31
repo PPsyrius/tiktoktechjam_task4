@@ -4,7 +4,7 @@ Main branch with integrated retrieval, memory, and reranking updates.
 
 Current branch: `main`
 
-Last updated: `2026-08-30`
+Last updated: `2026-08-31`
 
 ## Part 1 catalog data layer
 
@@ -73,6 +73,7 @@ Implemented:
 - content-addressed catalog and FTS5 caches with explicit corruption failures
 - Memory state to SearchContext integration
 - lexical and structured candidate retrieval
+- selective MiniLM semantic retrieval with lexical-confidence gating
 - candidate deduplication and source-score merging are working
 - snippet evidence is connected to retrieval and reranking
 - same-task override handling is stabilized
@@ -90,7 +91,6 @@ Not integrated yet:
 - rating / review-count features are not implemented yet
 - clarification still follows the memory module's attribute order rather than
   reranker uncertainty
-- semantic retrieval is optional and not enabled in the default local setup
 
 ## Local Setup
 
@@ -103,21 +103,40 @@ gzip -dk ParticipationKit/catalog.jsonl.gz
 mv ParticipationKit/catalog.jsonl data/catalog.jsonl
 ```
 
-Run the current integrated evaluator:
+Run the non-semantic evaluator:
 
 ```bash
 python3 -m evaluator.local_evaluator
 ```
 
-Current local metrics on `main`:
+The verified best configuration uses the pinned `all-MiniLM-L6-v2` model,
+semantic weight `0.3`, at most 40 semantic candidates, and dynamic semantic
+gating. From a fresh clone, install dependencies and run:
 
-- `HitRate@10 = 0.95`
-- `MRR = 0.649167`
-- `MTTC = 2.785`
-- `recommended_technical_score = 0.83405`
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m scripts.run_best_semantic --download-model
+```
+
+The command downloads the pinned model revision when necessary, rebuilds the
+catalog and semantic indexes, runs all 200 public sessions, and rejects a stale
+or incompatible semantic asset instead of reporting a fallback result as valid.
+On a machine that already has the model and a current index, use:
+
+```bash
+python3 -m scripts.run_best_semantic --reuse-index
+```
+
+Verified semantic metrics on commit `c92d632`:
+
+- `HitRate@10 = 0.955`
+- `MRR = 0.638062`
+- `MTTC = 2.74`
+- `recommended_technical_score = 0.834119`
 
 These are full local public-set evaluator results for the current branch, not the
-original starter baseline in `docs/baseline_results.json`.
+original starter baseline in `docs/baseline_results.json`. The model, generated
+index, caches, and result files remain local and are intentionally ignored by Git.
 
 ## Section 5 API Shape
 
@@ -222,7 +241,6 @@ python3 -m unittest tests.test_retrieval tests.test_understanding tests.test_mem
 3. Add `clarification_slot` selection when top candidates are difficult to distinguish.
 4. Expand structured attribute coverage and product quality signals.
 5. Compare pool-size and route-ablation effects to separate retrieval gains from reranking gains.
-6. Package one reproducible semantic setup and re-measure end-to-end metrics.
 
 ## Notes
 

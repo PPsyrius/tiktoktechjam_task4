@@ -145,32 +145,26 @@ Call close() after use. There is no query/session cache.
 
 ## Optional offline semantic route
 
-In your chosen Python 3.10+ environment:
+The repository's verified configuration uses a pinned
+`sentence-transformers/all-MiniLM-L6-v2` revision. From the repository root:
 
 ```bash
-python -m pip install -r requirements-semantic.txt
-python -m retrieval.build_index \
-  --model-dir /path/to/local/sentence-transformer \
-  --semantic-output artifacts/retrieval/dense.npz
-python -m scripts.evaluate_retrieval \
-  --model-dir /path/to/local/sentence-transformer \
-  --semantic-index artifacts/retrieval/dense.npz \
-  --output results/task4_dense_recall.json
+python -m pip install -r requirements.txt
+python -m scripts.run_best_semantic --download-model
 ```
 
-For prefix-dependent models, pass identical `--query-prefix` and
-`--document-prefix` settings to both commands. These are fingerprinted with model
-files. No particular model's quality, license or final runtime budget is assumed.
+This entrypoint rebuilds the index and runs the exact evaluated settings:
+semantic weight `0.3`, candidate cap `40`, dynamic gating, lexical-fill threshold
+`0.75`, shadow overlap `2`, and lexical shadow window `160`. Use
+`--reuse-index` only when the catalog, model, and index are already compatible.
+Generated model and index files are local artifacts and are ignored by Git.
 
-For integration: create LocalSentenceEncoder, call SemanticRetriever.load, and
-pass it as `semantic=` to HybridRetriever with
-`RetrievalConfig(enable_semantic=True)`. Inference never auto-builds missing assets.
-The benchmark reports missing/mismatched assets and degrades; the explicit builder
-fails loudly. Custom encoders need `key`, `encode_documents(texts)` and
-`encode_queries(texts)`.
+For lower-level integration, create `LocalSentenceEncoder`, call
+`SemanticRetriever.load`, and pass it as `semantic=` to `HybridRetriever` with
+`RetrievalConfig(enable_semantic=True)`. Inference never auto-builds missing
+assets. The reproducible entrypoint treats a missing or mismatched semantic asset
+as an error rather than accepting the lexical fallback score.
 
-Optional requirements specify compatibility ranges, not a locked environment.
-Record exact installed versions and model files before final submission.
 Dense unit tests use deterministic fixture embeddings: they verify mechanics,
 not real-model quality.
 

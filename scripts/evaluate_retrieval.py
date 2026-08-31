@@ -121,7 +121,7 @@ def main():
     parser.add_argument("--hard-filter", action="store_true")
     parser.add_argument("--model-dir")
     parser.add_argument("--semantic-index")
-    parser.add_argument("--semantic-weight", type=float, default=0.6)
+    parser.add_argument("--semantic-weight", type=float, default=0.3)
     parser.add_argument("--semantic-candidate-limit", type=int, default=40)
     parser.add_argument("--dynamic-semantic-gate", action="store_true")
     parser.add_argument("--semantic-min-lexical-fill", type=float, default=0.75)

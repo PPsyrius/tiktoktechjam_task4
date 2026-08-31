@@ -163,7 +163,7 @@ def main():
 
     agent = Agent(
         retriever=retriever,
-        semantic_weight=0.4,
+        semantic_weight=0.3,
         diagnostic_hook=diagnostic_hook,
     )
     case_results = []
