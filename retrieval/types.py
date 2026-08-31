@@ -44,6 +44,8 @@ class SearchContext:
     constraints: tuple[Constraint, ...] = ()
     mode: str = "unknown"
     semantic_query: str = ""
+    preference_override: bool = False
+    initial_turn: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.queries, str):
@@ -58,6 +60,10 @@ class SearchContext:
             raise TypeError("constraints must contain Constraint objects")
         if not isinstance(self.semantic_query, str):
             raise TypeError("semantic_query must be a string")
+        if not isinstance(self.preference_override, bool):
+            raise TypeError("preference_override must be a boolean")
+        if not isinstance(self.initial_turn, bool):
+            raise TypeError("initial_turn must be a boolean")
 
 
 @dataclass(frozen=True)
@@ -82,6 +88,8 @@ class RetrievalDiagnostics:
     errors: dict = field(default_factory=dict)
     fallback_used: bool = False
     filtered_count: int = 0
+    semantic_gate: float = 0.0
+    semantic_shadow_overlap: int = 0
     total_ms: float = 0.0
 
 
@@ -89,6 +97,7 @@ class RetrievalDiagnostics:
 class CandidatePool:
     candidates: tuple[Candidate, ...]
     diagnostics: RetrievalDiagnostics
+    deferred_candidates: Tuple[str, ...] = ()
 
     def __iter__(self):
         return iter(self.candidates)

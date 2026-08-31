@@ -22,7 +22,7 @@ class RankingResult:
     clarification_slot: str | None = None
 
 
-def _base_candidate_score(candidate: dict[str, Any]) -> float:
+def _base_candidate_score(candidate: dict[str, Any], semantic_weight: float = 0.6) -> float:
     ranks = candidate.get("source_ranks") or {}
     scores = candidate.get("source_scores") or {}
     total = 0.0
@@ -43,7 +43,7 @@ def _base_candidate_score(candidate: dict[str, Any]) -> float:
         total += min(float(scores["structured"]), 5.0) / 10.0
     semantic_rank = ranks.get("semantic")
     if semantic_rank:
-        total += 0.6 / float(semantic_rank)
+        total += semantic_weight / float(semantic_rank)
     return total
 
 
@@ -51,13 +51,14 @@ def rank_candidates(
     search_context: dict[str, Any],
     candidate_pool: list[dict[str, Any]],
     top_k: int = 10,
+    semantic_weight: float = 0.6,
 ) -> RankingResult:
     fused_candidates = fuse_candidates(candidate_pool)
     ranked_items: list[RankedItem] = []
 
     for candidate in fused_candidates:
         constraint_score = score_constraints(candidate, search_context)
-        final_score = _base_candidate_score(candidate) + constraint_score.score
+        final_score = _base_candidate_score(candidate, semantic_weight) + constraint_score.score
 
         ranked_items.append(
             RankedItem(

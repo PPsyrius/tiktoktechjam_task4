@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from retrieval import Constraint, HybridRetriever, SearchContext
 from starter.catalog import ProductStore
@@ -80,6 +80,8 @@ def _retrieval_context(
     message: str,
     state: Any,
     query_rewrites: tuple[str, ...] | list[str] = (),
+    preference_override: bool = False,
+    initial_turn: bool = False,
 ) -> SearchContext:
     phrases = _constraint_phrases(state)
     queries: list[str] = []
@@ -138,6 +140,8 @@ def _retrieval_context(
         constraints=tuple(constraints),
         mode=str(mode),
         semantic_query=semantic_query,
+        preference_override=preference_override,
+        initial_turn=initial_turn,
     )
 
 
@@ -203,6 +207,8 @@ class Agent:
         retriever: HybridRetriever | None = None,
         cache_dir: str | Path | None = None,
         candidate_limit: int = 200,
+        semantic_weight: float = 0.6,
+        diagnostic_hook: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.catalog_path = Path(catalog_path)
         self.memory = MemoryService()
@@ -230,6 +236,10 @@ class Agent:
         ):
             raise ValueError("candidate_limit exceeds retriever capacity")
         self.candidate_limit = candidate_limit
+        if semantic_weight < 0:
+            raise ValueError("semantic_weight must be non-negative")
+        self.semantic_weight = float(semantic_weight)
+        self.diagnostic_hook = diagnostic_hook
         # Keep a bounded set of candidates already admitted for the active
         # shopping task.  Only identifiers are retained: old retrieval scores
         # must not influence ranking after the dialogue state changes.
@@ -318,6 +328,24 @@ class Agent:
         self._candidate_history[session_id] = (task_version, retained_ids)
         return candidates
 
+    def _remember_deferred_candidates(
+        self,
+        session_id: str,
+        task_version: int,
+        parent_asins: tuple[str, ...],
+    ) -> None:
+        if not parent_asins:
+            return
+        previous_version, previous_ids = self._candidate_history.get(
+            session_id,
+            (task_version, ()),
+        )
+        if previous_version != task_version:
+            previous_ids = ()
+        history_limit = self.candidate_limit * 2
+        retained_ids = tuple(dict.fromkeys((*previous_ids, *parent_asins)))[:history_limit]
+        self._candidate_history[session_id] = (task_version, retained_ids)
+
     def respond(
         self,
         session_id: str,
@@ -339,9 +367,11 @@ class Agent:
         )
         parsed = parse_result.parsed
         scoped_override = False
+        preference_override = False
         if parsed is not None:
             parser_requested_reset = parsed.reset_task
             override_phrase = bool(OVERRIDE_RE.search(user_message))
+            preference_override = parser_requested_reset or override_phrase
             parsed = _scope_override_update(
                 parsed,
                 self.memory.get_state(session_id),
@@ -361,6 +391,8 @@ class Agent:
             user_message,
             retrieval_state,
             query_rewrites=parse_result.query_rewrites,
+            preference_override=preference_override,
+            initial_turn=turn == 1,
         )
         pool = self.retriever.retrieve(
             retrieval_context,
@@ -399,7 +431,34 @@ class Agent:
             payloads,
         )
 
-        ranking = rank_candidates(ranking_context, payloads, top_k=top_k)
+        ranking = rank_candidates(
+            ranking_context,
+            payloads,
+            top_k=top_k,
+            semantic_weight=self.semantic_weight * pool.diagnostics.semantic_gate,
+        )
+        if self.diagnostic_hook is not None:
+            self.diagnostic_hook({
+                "session_id": session_id,
+                "user_message": user_message,
+                "turn": turn,
+                "retrieval_context": retrieval_context,
+                "ranking_context": ranking_context,
+                "candidate_pool": pool,
+                "candidate_payloads": tuple(payloads),
+                "ranking": ranking,
+                "semantic_weight": (
+                    self.semantic_weight * pool.diagnostics.semantic_gate
+                ),
+            })
+        # Shadow semantic candidates do not affect the current Top 10. They are
+        # retained only for later turns, where newly disclosed constraints can
+        # rerank them without inheriting stale semantic scores.
+        self._remember_deferred_candidates(
+            session_id,
+            self.memory.get_state(session_id).task_version,
+            pool.deferred_candidates,
+        )
         recommendations = [
             {"parent_asin": item.parent_asin, "score": item.final_score}
             for item in ranking.items

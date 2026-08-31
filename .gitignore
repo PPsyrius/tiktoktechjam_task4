@@ -20,5 +20,6 @@ tests/test_organizer_pipeline.py
 *.log
 # Reproducible local task 4 assets and experiment outputs (not source data).
 .cache/retrieval/
+artifacts/models/
 artifacts/retrieval/
 results/

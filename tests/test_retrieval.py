@@ -615,6 +615,115 @@ class SemanticTests(unittest.TestCase):
         self.assertIn("semantic", pool.diagnostics.errors)
         self.assertIn("A", ids(pool))
 
+    def test_semantic_route_only_adds_up_to_configured_cap(self):
+        class FixedRoute:
+            def __init__(self, source, product_ids):
+                self.source = source
+                self.product_ids = product_ids
+
+            def search(self, context, limit):
+                return [
+                    Candidate(asin, (SourceHit(self.source, rank, 1.0 / rank),))
+                    for rank, asin in enumerate(self.product_ids[:limit], 1)
+                ]
+
+        store = ProductStore.from_records([
+            {"parent_asin": str(i), "title": f"product {i}"} for i in range(10)
+        ])
+        config = RetrievalConfig(
+            enable_bm25=False,
+            enable_structured=False,
+            enable_semantic=True,
+            semantic_candidate_limit=2,
+        )
+        semantic = FixedRoute("semantic", [str(i) for i in range(5, 10)])
+        hybrid = HybridRetriever(store, config, semantic=semantic)
+        hybrid.routes["bm25"] = FixedRoute("bm25", [str(i) for i in range(5)])
+        pool = hybrid.retrieve(SearchContext(queries=("product",), semantic_query="product"), 10)
+        semantic_only = [
+            candidate for candidate in pool
+            if {hit.source for hit in candidate.hits} == {"semantic"}
+        ]
+        self.assertEqual(len(semantic_only), 2)
+
+    def test_dynamic_gate_uses_override_without_hidden_scenario_label(self):
+        class FixedRoute:
+            def __init__(self, source, product_ids):
+                self.source = source
+                self.product_ids = product_ids
+
+            def search(self, context, limit):
+                return [
+                    Candidate(asin, (SourceHit(self.source, rank, 1.0),))
+                    for rank, asin in enumerate(self.product_ids[:limit], 1)
+                ]
+
+        store = ProductStore.from_records([
+            {"parent_asin": str(i), "title": f"product {i}"} for i in range(10)
+        ])
+        config = RetrievalConfig(
+            enable_bm25=False,
+            enable_structured=False,
+            enable_semantic=True,
+            dynamic_semantic_gate=True,
+            semantic_candidate_limit=2,
+            semantic_shadow_min_lexical_overlap=3,
+        )
+        semantic = FixedRoute("semantic", [str(i) for i in range(5, 10)])
+        hybrid = HybridRetriever(store, config, semantic=semantic)
+        hybrid.routes = {
+            "bm25": FixedRoute("bm25", [str(i) for i in range(10)]),
+            "semantic": semantic,
+        }
+
+        strong = hybrid.retrieve(SearchContext(
+            queries=("product shoes",),
+            initial_turn=True,
+        ), 5)
+        self.assertEqual(strong.diagnostics.semantic_gate, 0.0)
+        self.assertEqual(strong.diagnostics.route_counts["semantic"], 0)
+        self.assertEqual(strong.deferred_candidates, ("5", "6"))
+
+        later = hybrid.retrieve(SearchContext(queries=("product shoes",)), 5)
+        self.assertEqual(later.deferred_candidates, ())
+
+        buying = hybrid.retrieve(SearchContext(
+            queries=("product shoes",),
+            mode="buying",
+            initial_turn=True,
+        ), 5)
+        self.assertEqual(buying.deferred_candidates, ())
+        self.assertEqual(buying.diagnostics.semantic_shadow_overlap, 2)
+
+        permissive = HybridRetriever(
+            store,
+            RetrievalConfig(
+                enable_bm25=False,
+                enable_structured=False,
+                enable_semantic=True,
+                dynamic_semantic_gate=True,
+                semantic_candidate_limit=2,
+                semantic_shadow_min_lexical_overlap=2,
+            ),
+            semantic=semantic,
+        )
+        permissive.routes = dict(hybrid.routes)
+        admitted = permissive.retrieve(SearchContext(
+            queries=("product shoes",),
+            mode="buying",
+            initial_turn=True,
+        ), 5)
+        self.assertEqual(admitted.deferred_candidates, ())
+        self.assertEqual(admitted.diagnostics.semantic_gate, 1.0)
+        self.assertGreater(admitted.diagnostics.route_counts["semantic"], 0)
+
+        override = hybrid.retrieve(SearchContext(
+            queries=("product shoes",),
+            preference_override=True,
+        ), 5)
+        self.assertEqual(override.diagnostics.semantic_gate, 1.0)
+        self.assertGreater(override.diagnostics.route_counts["semantic"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -121,6 +121,12 @@ def main():
     parser.add_argument("--hard-filter", action="store_true")
     parser.add_argument("--model-dir")
     parser.add_argument("--semantic-index")
+    parser.add_argument("--semantic-weight", type=float, default=0.6)
+    parser.add_argument("--semantic-candidate-limit", type=int, default=40)
+    parser.add_argument("--dynamic-semantic-gate", action="store_true")
+    parser.add_argument("--semantic-min-lexical-fill", type=float, default=0.75)
+    parser.add_argument("--semantic-shadow-min-overlap", type=int, default=2)
+    parser.add_argument("--semantic-shadow-lexical-window", type=int, default=160)
     parser.add_argument("--query-prefix", default="")
     parser.add_argument("--document-prefix", default="")
     args = parser.parse_args()
@@ -128,6 +134,16 @@ def main():
         parser.error("--ks must be in [1, 200]")
     if bool(args.model_dir) != bool(args.semantic_index):
         parser.error("--model-dir and --semantic-index must be supplied together")
+    if args.semantic_weight < 0:
+        parser.error("--semantic-weight must be non-negative")
+    if not 0 <= args.semantic_candidate_limit <= 200:
+        parser.error("--semantic-candidate-limit must be in [0, 200]")
+    if not 0 < args.semantic_min_lexical_fill <= 1:
+        parser.error("--semantic-min-lexical-fill must be in (0, 1]")
+    if args.semantic_shadow_min_overlap < 0:
+        parser.error("--semantic-shadow-min-overlap must be non-negative")
+    if args.semantic_shadow_lexical_window < 1:
+        parser.error("--semantic-shadow-lexical-window must be positive")
     started = time.perf_counter()
     records = read_rows(args.catalog)
     products = {p["parent_asin"]: p for p in records}
@@ -136,7 +152,13 @@ def main():
     cases = read_rows(args.contexts) if args.contexts else public_cases(samples, products)
     config = RetrievalConfig(enable_bm25=not args.no_bm25, enable_structured=not args.no_structured,
                              enable_semantic=bool(args.model_dir), catalog_fallback=not args.no_fallback,
-                             filter_known_hard_failures=args.hard_filter)
+                             filter_known_hard_failures=args.hard_filter,
+                             semantic_candidate_limit=args.semantic_candidate_limit,
+                             dynamic_semantic_gate=args.dynamic_semantic_gate,
+                             semantic_min_lexical_fill=args.semantic_min_lexical_fill,
+                             semantic_shadow_min_lexical_overlap=
+                                 args.semantic_shadow_min_overlap,
+                             semantic_shadow_lexical_window=args.semantic_shadow_lexical_window)
     semantic, semantic_error = None, None
     if args.model_dir:
         try:
@@ -174,7 +196,13 @@ def main():
         print(json.dumps(result, indent=2))
         if args.official_output:
             categories = {asin: p.get("categories") or [] for asin, p in products.items()}
-            official = evaluate(Agent(retriever=retriever), samples, set(products), categories, products)
+            official = evaluate(
+                Agent(retriever=retriever, semantic_weight=args.semantic_weight),
+                samples,
+                set(products),
+                categories,
+                products,
+            )
             write_result(args.official_output, official)
             print(json.dumps({k: v for k, v in official.items() if k != "sessions"}, indent=2))
     finally:
