@@ -19,7 +19,6 @@ from local_experiments.parser.models import (
 from local_experiments.parser.parser_service import DialogueParser, ParseResult, ParserValidator
 from local_experiments.parser.rule_extractor import CatalogLexicon, MessageNormalizer, RuleExtractor
 
-
 __all__ = [
     "Ambiguity",
     "CandidateSource",

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import re
 
-
 # Shared with starter.catalog.feature_extractor. Do not expand these three tuples.
 COLORS = (
     "black", "white", "blue", "red", "pink", "green", "brown",

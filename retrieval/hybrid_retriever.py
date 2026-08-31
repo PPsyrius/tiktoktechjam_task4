@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
 import time
-from .bm25_retriever import BM25Retriever, DEFAULT_WEIGHTS
+from dataclasses import dataclass
+
+from .bm25_retriever import DEFAULT_WEIGHTS, BM25Retriever
 from .merge import interleave
 from .product_store import constraint_status
 from .structured_retriever import StructuredRetriever

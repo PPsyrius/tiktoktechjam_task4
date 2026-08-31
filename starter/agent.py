@@ -20,7 +20,6 @@ from starter.snippet_index import SnippetIndex, flatten_phrases
 from starter.understanding import parse_requirement
 from starter.understanding.query_parser import OVERRIDE_RE
 
-
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",

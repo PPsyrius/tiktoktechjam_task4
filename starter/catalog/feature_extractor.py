@@ -6,10 +6,9 @@ import math
 import re
 from collections.abc import Iterable, Mapping
 
-from .product import ATTRIBUTE_FIELDS, TEXT_FIELDS, Product
-
-
 from starter.understanding.catalog_vocab import COLORS, MATERIALS, USE_CASES
+
+from .product import ATTRIBUTE_FIELDS, TEXT_FIELDS, Product
 
 DETAIL_ATTRIBUTE_KEYS = {
     "brand": "brand",

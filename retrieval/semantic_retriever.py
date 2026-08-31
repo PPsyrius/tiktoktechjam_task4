@@ -4,8 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 from .bm25_retriever import lexical_queries
 from .types import Candidate, SourceHit

@@ -6,9 +6,6 @@ import urllib.error
 import urllib.request
 from typing import Protocol
 
-from starter.memory import Intent
-from starter.memory.models import CurrentState
-
 from local_experiments.parser.models import (
     Ambiguity,
     CandidateSource,
@@ -17,7 +14,8 @@ from local_experiments.parser.models import (
     SemanticParse,
     TokenUsage,
 )
-
+from starter.memory import Intent
+from starter.memory.models import CurrentState
 
 SYSTEM_PROMPT = """You are the semantic layer of a shopping dialogue parser.
 Return one JSON object only. Do not write prose.

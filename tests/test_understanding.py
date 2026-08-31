@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from starter.memory.models import Intent, UpdateOperation
 from starter.understanding import (
     classify_intent,
     constraint_kind,
@@ -12,7 +13,6 @@ from starter.understanding import (
 )
 from starter.understanding.catalog_vocab import typed_catalog_matches
 from starter.understanding.llm_parser import extract_json_object, parsed_update_from_llm
-from starter.memory.models import Intent, UpdateOperation
 
 
 class QueryParserTest(unittest.TestCase):

@@ -281,10 +281,8 @@ import gzip
 import importlib.util
 import unittest
 
-from retrieval import (Candidate, Constraint, HybridRetriever,
-                       RetrievalConfig, SearchContext, SourceHit)
-from retrieval.bm25_retriever import BM25Retriever, terms
-from retrieval.bm25_retriever import BM25CacheError
+from retrieval import Candidate, Constraint, HybridRetriever, RetrievalConfig, SearchContext, SourceHit
+from retrieval.bm25_retriever import BM25CacheError, BM25Retriever, terms
 from retrieval.merge import interleave
 from retrieval.product_store import constraint_status
 from retrieval.structured_retriever import StructuredRetriever
@@ -598,6 +596,7 @@ class SemanticTests(unittest.TestCase):
 
     def test_reject_invalid_vectors_and_ids(self):
         import numpy as np
+
         from retrieval.semantic_retriever import SemanticRetriever
         for ids_, vectors in ((["A"] * 4, np.ones((4, 2))), (list("ABCD"), np.ones((3, 2))),
                               (list("ABCD"), np.zeros((4, 2))), (list("ABCD"), np.full((4, 2), np.nan))):
@@ -606,6 +605,7 @@ class SemanticTests(unittest.TestCase):
 
     def test_invalid_query_vector_falls_back(self):
         import numpy as np
+
         from retrieval.semantic_retriever import SemanticRetriever
         semantic = SemanticRetriever(self.store, self.encoder, list("ABCD"), np.ones((4, 2)))
         self.encoder.encode_queries = lambda texts: np.ones((1, 3))

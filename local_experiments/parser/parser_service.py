@@ -5,15 +5,13 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from starter.memory import ParseUpdate
-from starter.memory.models import CurrentState
-from starter.memory.state_manager import StateManager
-
 from local_experiments.parser.fusion_resolver import FusionResolver
 from local_experiments.parser.llm_parser import DeepSeekSemanticParser, SemanticParser
 from local_experiments.parser.models import ParserTrace, ResolvedParse
 from local_experiments.parser.rule_extractor import CatalogLexicon, MessageNormalizer, RuleExtractor
-
+from starter.memory import ParseUpdate
+from starter.memory.models import CurrentState
+from starter.memory.state_manager import StateManager
 
 PARSER_ENV_KEYS = frozenset({
     "TECHJAM_PARSER_MODE",

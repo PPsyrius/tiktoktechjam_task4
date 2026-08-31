@@ -17,7 +17,6 @@ from starter.memory.models import (
 from starter.understanding.query_parser import classify_intent, constraint_kind, parse_user_message
 from starter.understanding.query_rewriter import rewrite_queries
 
-
 DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
 DEFAULT_DEEPSEEK_TIMEOUT_SECONDS = 2.5
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"

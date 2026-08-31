@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from starter.memory.models import (
-    AttributeStatus,
     CONSTRAINT_SLOTS,
     DIRECT_SLOTS,
     EXCLUDED_SLOT,
     HISTORY_LIMIT,
     PREFERENCE_SLOTS,
+    AttributeStatus,
     CurrentState,
     ParseUpdate,
     StateChange,

@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from starter.memory import Intent, UpdateOperation
-from starter.memory.models import CONSTRAINT_SLOTS, PREFERENCE_SLOTS, CurrentState
-
 from local_experiments.parser.models import (
     CandidateSource,
     FieldCandidate,
@@ -12,7 +9,8 @@ from local_experiments.parser.models import (
     RuleExtraction,
     SemanticParse,
 )
-
+from starter.memory import Intent, UpdateOperation
+from starter.memory.models import CONSTRAINT_SLOTS, PREFERENCE_SLOTS, CurrentState
 
 RULE_PRIMARY_SLOTS = frozenset({
     "price_min",

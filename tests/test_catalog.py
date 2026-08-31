@@ -6,15 +6,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.profile_catalog import profile
 from starter.catalog import (
     CatalogCacheError,
-    CatalogLoadError,
     CatalogLoader,
+    CatalogLoadError,
     FeatureExtractor,
     ProductStore,
 )
 from starter.catalog.feature_extractor import parse_price
-from scripts.profile_catalog import profile
 
 
 def sample_record(parent_asin: str = "A") -> dict:

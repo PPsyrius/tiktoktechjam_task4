@@ -7,7 +7,6 @@ from typing import Any
 from starter.memory.models import NUMERIC_SLOTS
 from starter.snippet_index import flatten_phrases, fold_text, fold_variants
 
-
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",

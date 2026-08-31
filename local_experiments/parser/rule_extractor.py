@@ -6,9 +6,6 @@ import re
 import unicodedata
 from pathlib import Path
 
-from starter.memory import UpdateOperation
-from starter.memory.models import DECLINABLE_SLOTS
-
 from local_experiments.parser.models import (
     CandidateSource,
     ExtractedFact,
@@ -16,7 +13,8 @@ from local_experiments.parser.models import (
     NormalizedMessage,
     RuleExtraction,
 )
-
+from starter.memory import UpdateOperation
+from starter.memory.models import DECLINABLE_SLOTS
 
 MATERIALS = (
     "cotton",

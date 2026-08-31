@@ -2,22 +2,21 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
-from dataclasses import asdict
 import gzip
 import hashlib
 import json
 import math
-from pathlib import Path
 import platform
 import resource
 import statistics
 import subprocess
 import sys
 import time
+from collections import Counter, defaultdict
+from dataclasses import asdict
+from pathlib import Path
 
-from evaluator.local_evaluator import (coarse_category, evaluate, initial_message,
-                                       materialize_hidden_fields)
+from evaluator.local_evaluator import coarse_category, evaluate, initial_message, materialize_hidden_fields
 from retrieval import Constraint, HybridRetriever, ProductStore, RetrievalConfig, SearchContext
 from starter.agent import Agent
 

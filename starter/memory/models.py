@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TypeAlias
 
-
 JsonScalar: TypeAlias = str | int | float | bool
 StateValue: TypeAlias = JsonScalar | tuple[JsonScalar, ...]
 MEMORY_SCHEMA_VERSION = "4.0"

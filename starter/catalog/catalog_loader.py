@@ -4,8 +4,8 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
-from pathlib import Path
 from collections.abc import Iterator, Mapping
+from pathlib import Path
 
 
 class CatalogLoadError(ValueError):

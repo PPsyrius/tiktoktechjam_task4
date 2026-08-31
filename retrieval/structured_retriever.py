@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
+
 from .product_store import constraint_status, normalized
 from .types import Candidate, SourceHit
 

@@ -9,7 +9,6 @@ from pathlib import Path
 from starter.catalog import CatalogLoader
 from starter.catalog.feature_extractor import DETAIL_ATTRIBUTE_KEYS, parse_price
 
-
 PROFILE_FIELDS = (
     "parent_asin",
     "title",

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from starter.catalog.feature_extractor import (
     normalize_text as normalized,
+)
+from starter.catalog.feature_extractor import (
     value_to_text as text,
 )
 from starter.catalog.product import TEXT_FIELDS, Product

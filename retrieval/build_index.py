@@ -5,6 +5,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+
 from .bm25_retriever import BM25Retriever
 from .product_store import ProductStore
 

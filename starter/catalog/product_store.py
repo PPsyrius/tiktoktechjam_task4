@@ -4,14 +4,13 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from collections.abc import Iterable, Mapping
 
 from .catalog_loader import CatalogLoader
 from .feature_extractor import FeatureExtractor, normalize_text
 from .product import Product
-
 
 STORE_SCHEMA_VERSION = "task1-product-store-v3"
 

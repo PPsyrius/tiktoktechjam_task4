@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from typing import Any
 from collections.abc import Iterable, Mapping
+from typing import Any
 
 from retrieval.product_store import ProductStore
-
 
 SPACE_RE = re.compile(r"\s+")
 SPLIT_RE = re.compile(r"; |\n")

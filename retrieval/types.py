@@ -1,8 +1,8 @@
 """Task 4 boundary objects. No session state or evaluation labels belong here."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
+from dataclasses import dataclass, field
 
 from starter.catalog.product import ATTRIBUTE_FIELDS
 

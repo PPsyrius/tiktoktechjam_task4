@@ -5,7 +5,6 @@ from typing import Any
 
 from starter.memory.models import ParseUpdate, RetrievalState, UpdateOperation
 
-
 WRAPPER_RE = re.compile(
     r"(?:i(?:'m| am) looking for|i(?:'m| am) after|i(?:'m| am) shopping for|"
     r"please find|show me|i want|i need(?!\s+is\b)|"

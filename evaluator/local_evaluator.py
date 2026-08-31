@@ -11,7 +11,6 @@ from pathlib import Path
 
 from starter.agent import Agent
 
-
 MAX_TURNS = 10
 TOP_K = 10
 ALLOWED_ATTRIBUTES = {

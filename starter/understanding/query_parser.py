@@ -20,7 +20,6 @@ from starter.understanding.catalog_vocab import (
     word_text,
 )
 
-
 HARD_SLOTS = frozenset({
     "brand", "color", "size", "price_min", "price_max", "rating_min",
 })

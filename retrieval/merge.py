@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from itertools import zip_longest
+
 from .types import Candidate
 
 

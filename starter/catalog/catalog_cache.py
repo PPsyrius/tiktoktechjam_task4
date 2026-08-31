@@ -7,10 +7,10 @@ import sqlite3
 import tempfile
 import zlib
 from pathlib import Path
+
 from .catalog_loader import CatalogLoader
 from .product import Product
-from .product_store import ProductStore, STORE_SCHEMA_VERSION
-
+from .product_store import STORE_SCHEMA_VERSION, ProductStore
 
 CACHE_SCHEMA_VERSION = "catalog-cache-v1"
 

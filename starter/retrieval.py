@@ -10,7 +10,6 @@ from starter.catalog import ProductStore
 from starter.memory.models import RetrievalState
 from starter.snippet_index import flatten_phrases
 
-
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
