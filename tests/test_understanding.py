@@ -88,6 +88,35 @@ class QueryParserTest(unittest.TestCase):
         self.assertIn("Machine Wash", features)
         self.assertIn("Tumble Dry", features)
 
+    def test_catalog_no_label_is_a_positive_requirement(self) -> None:
+        parsed = parse_user_message(
+            "s001",
+            "For that, what matters is: Imported; No Closure closure.",
+            2,
+        )
+        assert parsed is not None
+        operations = {
+            (update.slot, update.op, update.value) for update in parsed.updates
+        }
+        self.assertIn(
+            ("feature", UpdateOperation.ADD, "No Closure closure"),
+            operations,
+        )
+        self.assertFalse(any(update.op is UpdateOperation.EXCLUDE for update in parsed.updates))
+
+    def test_explicit_negative_inside_requirement_stays_negative(self) -> None:
+        parsed = parse_user_message(
+            "s001",
+            "For that, what matters is: not black; without polyester.",
+            2,
+        )
+        assert parsed is not None
+        operations = {
+            (update.slot, update.op, update.value) for update in parsed.updates
+        }
+        self.assertIn(("color", UpdateOperation.EXCLUDE, "black"), operations)
+        self.assertIn(("material", UpdateOperation.EXCLUDE, "polyester"), operations)
+
     def test_override_keeps_full_new_requirement(self) -> None:
         parsed = parse_user_message(
             "s001",

@@ -282,6 +282,7 @@ def _append_constraint(
     *,
     keep_short_snippet: bool,
     force_negative: bool = False,
+    allow_bare_no_negative: bool = True,
 ) -> None:
     cleaned = _clean(chunk, limit=180)
     if not cleaned:
@@ -290,7 +291,11 @@ def _append_constraint(
     if classified is None:
         return
     slot, value = classified
-    negative = force_negative or bool(NEGATION_PREFIX_RE.search(cleaned))
+    negative_prefix = NEGATION_PREFIX_RE.search(cleaned)
+    bare_no = bool(re.match(r"^no\b", cleaned, re.IGNORECASE))
+    negative = force_negative or bool(
+        negative_prefix and (allow_bare_no_negative or not bare_no)
+    )
     if negative and slot in EXCLUDABLE_SLOTS:
         if not _has_update(updates, slot, UpdateOperation.EXCLUDE, value):
             updates.append(StateUpdate(slot, UpdateOperation.EXCLUDE, value))
@@ -443,7 +448,16 @@ def parse_user_message(
         if not key or key in seen_chunks:
             continue
         seen_chunks.add(key)
-        _append_constraint(updates, chunk, keep_short_snippet=reset_task)
+        _append_constraint(
+            updates,
+            chunk,
+            keep_short_snippet=reset_task,
+            # Amazon catalog features frequently use labels such as
+            # "No Closure closure" or "No Fur". Inside an explicit
+            # requirement payload these are positive catalog phrases, not
+            # standalone user negations.
+            allow_bare_no_negative=requirement is None,
+        )
 
     for decline in DECLINE_RE.finditer(message):
         _append_decline(updates, decline.group(1))
@@ -453,7 +467,8 @@ def parse_user_message(
             _append_remove(updates, match.group(1))
 
     _extract_labeled_slots(message, updates)
-    _extract_negatives(message, updates)
+    negative_scan = message if requirement is None else message[:requirement.start(1)]
+    _extract_negatives(negative_scan, updates)
 
     hard_ops = any(
         constraint_kind(update.slot, update.op) in {"hard", "negative"}
