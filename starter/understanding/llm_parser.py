@@ -344,16 +344,6 @@ def _enrich_parse_result(
         result.constraint_kinds = ()
         result.query_rewrites = rewrite_queries(user_message, None, search_context)
         return result
-    if parsed.intent is None and intent is not Intent.UNKNOWN:
-        parsed = ParseUpdate(
-            session_id=parsed.session_id,
-            intent=intent,
-            updates=parsed.updates,
-            reset_task=parsed.reset_task,
-            source_turn=parsed.source_turn,
-        )
-        result.parsed = parsed
-        intent, confidence = classify_intent(user_message, parsed)
     result.intent_confidence = confidence
     result.constraint_kinds = tuple(
         constraint_kind(update.slot, update.op) for update in parsed.updates

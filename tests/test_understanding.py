@@ -217,6 +217,18 @@ class LlmParserFallbackTest(unittest.TestCase):
         self.assertIn("task", result.constraint_kinds)
         self.assertIn("soft", result.constraint_kinds)
 
+    def test_inferred_intent_is_reported_but_not_written_into_update(self) -> None:
+        with patch("starter.understanding.llm_parser.deepseek_enabled", return_value=False):
+            result = parse_requirement(
+                "s001",
+                "Ignore my earlier preference. I am flexible about color.",
+                2,
+            )
+        assert result.parsed is not None
+        self.assertIsNone(result.parsed.intent)
+        self.assertGreaterEqual(result.intent_confidence, 0.9)
+        self.assertIn("decline", result.constraint_kinds)
+
     def test_uses_deepseek_json_when_chat_succeeds(self) -> None:
         fake_response = {
             "content": (
